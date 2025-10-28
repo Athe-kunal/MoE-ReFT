@@ -1,4 +1,25 @@
-from modeling_olmoe import OlmoeForCausalLM
-import configuration_olmoe
-
-model = OlmoeForCausalLM(configuration_olmoe.OlmoeConfig())
+{
+ "cells": [
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "ad14b8ec",
+   "metadata": {},
+   "outputs": [],
+   "source": []
+  }
+ ],
+ "metadata": {
+  "kernelspec": {
+   "display_name": "Python 3",
+   "language": "python",
+   "name": "python3"
+  },
+  "language_info": {
+   "name": "python",
+   "version": "3.11.3"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 5
+}
