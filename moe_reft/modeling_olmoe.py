@@ -36,8 +36,13 @@ from transformers.modeling_rope_utils import ROPE_INIT_FUNCTIONS, dynamic_rope_u
 from transformers.modeling_utils import PreTrainedModel
 from transformers.utils import auto_docstring, logging
 from transformers.utils.deprecation import deprecate_kwarg
-from moe_reft.configuration_olmoe import OlmoeConfig
+from moe_reft.configuration_olmoe import OlmoeInterventionsConfig, InterventionsConfig
+from moe_reft import interventions
 
+InterventionTypeClass = {
+    "LoreftIntervention": interventions.LoreftIntervention,
+    "DireftIntervention": interventions.DireftIntervention,
+}
 
 if is_flash_attn_available():
     from transformers.modeling_flash_attention_utils import _flash_attention_forward
@@ -164,7 +169,7 @@ class OlmoeRMSNorm(nn.Module):
 class OlmoeRotaryEmbedding(nn.Module):
     inv_freq: torch.Tensor  # fix linting for `register_buffer`
 
-    def __init__(self, config: OlmoeConfig, device=None):
+    def __init__(self, config: OlmoeInterventionsConfig, device=None):
         super().__init__()
         # BC: "rope_type" was originally "type"
         if hasattr(config, "rope_scaling") and isinstance(config.rope_scaling, dict):
@@ -266,7 +271,7 @@ def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
 class OlmoeAttention(nn.Module):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
 
-    def __init__(self, config: OlmoeConfig, layer_idx: Optional[int] = None):
+    def __init__(self, config: OlmoeInterventionsConfig, layer_idx: Optional[int] = None):
         super().__init__()
         self.config = config
         self.layer_idx = layer_idx
@@ -653,12 +658,13 @@ class OlmoeSparseMoeBlock(nn.Module):
 
 
 class OlmoeDecoderLayer(GradientCheckpointingLayer):
-    def __init__(self, config: OlmoeConfig, layer_idx: int):
+    def __init__(self, config: OlmoeInterventionsConfig, layer_idx: int):
         super().__init__()
         self.hidden_size = config.hidden_size
 
         self.self_attn = OLMOE_ATTENTION_CLASSES[config._attn_implementation](config=config, layer_idx=layer_idx)
-
+        self.layer_idx = layer_idx
+        self.interventions_config = config.intervention_config
         self.mlp = OlmoeSparseMoeBlock(config)
         self.input_layernorm = OlmoeRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.post_attention_layernorm = OlmoeRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
@@ -718,14 +724,27 @@ class OlmoeDecoderLayer(GradientCheckpointingLayer):
             position_embeddings=position_embeddings,
             **kwargs,
         )
+        # residual connection
         hidden_states = residual + hidden_states
-
+        if self.interventions_config.intervention_place == "after_attention":
+            do_intervention = _intervention_handler(self.interventions_config, self.layer_idx)
+            if do_intervention:
+                intervention_type = InterventionTypeClass[self.interventions_config.intervention_type]
+                hidden_states = intervention_type(
+                    low_rank_dimension=self.interventions_config.low_rank_dimension,
+                ).forward(hidden_states)
         # Fully Connected
         residual = hidden_states
         hidden_states = self.post_attention_layernorm(hidden_states)
         hidden_states, router_logits = self.mlp(hidden_states)
         hidden_states = residual + hidden_states
-
+        if self.interventions_config.intervention_place == "after_moe":
+            do_intervention = _intervention_handler(self.interventions_config, self.layer_idx)
+            if do_intervention:
+                intervention_type = InterventionTypeClass[self.interventions_config.intervention_type]
+                hidden_states = intervention_type(
+                    low_rank_dimension=self.interventions_config.low_rank_dimension,
+                ).forward(hidden_states)
         outputs = (hidden_states,)
 
         if output_attentions:
@@ -737,9 +756,21 @@ class OlmoeDecoderLayer(GradientCheckpointingLayer):
         return outputs
 
 
+def _intervention_handler(interventions_config: InterventionsConfig, layer_idx: int) -> bool:
+    if interventions_config.intervention_layers == "all":
+        return True
+    elif interventions_config.intervention_layers == "even_only":
+        if layer_idx % 2 == 0:
+            return True
+    elif interventions_config.intervention_layers == "odd_only":
+        if layer_idx % 2 != 0:
+            return True
+    return False
+
+
 @auto_docstring
 class OlmoePreTrainedModel(PreTrainedModel):
-    config: OlmoeConfig
+    config: OlmoeInterventionsConfig
     base_model_prefix = "model"
     supports_gradient_checkpointing = True
     _no_split_modules = ["OlmoeDecoderLayer"]
@@ -767,7 +798,7 @@ class OlmoePreTrainedModel(PreTrainedModel):
 
 @auto_docstring
 class OlmoeModel(OlmoePreTrainedModel):
-    def __init__(self, config: OlmoeConfig):
+    def __init__(self, config: OlmoeInterventionsConfig):
         super().__init__(config)
         self.padding_idx = config.pad_token_id
         self.vocab_size = config.vocab_size
