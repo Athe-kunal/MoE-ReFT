@@ -14,23 +14,31 @@ import pydantic
 from transformers.configuration_utils import PretrainedConfig
 from transformers.modeling_rope_utils import rope_config_validation
 
-from typing import Literal
+from typing import Literal, Self
 
 # Types for interventions
 InterventionLayers = Literal["all", "odd_only", "even_only", "alternate"]
 
 # Intervention place
-InterventionPlace = Literal["after_attention", "after_moe"]
+InterventionPlace = Literal["pre_moe", "after_moe"]
 
 # Intervention Type
 InterventionType = Literal["LoreftIntervention", "DireftIntervention"]
 
 
 class InterventionsConfig(pydantic.BaseModel):
-    intervention_layers: InterventionLayers = "all"
-    intervention_place: InterventionPlace = "after_attention"
     intervention_type: InterventionType = "LoreftIntervention"
-    low_rank_dimension: int = 32
+    intervention_layers: InterventionLayers = "all"
+    intervention_places: InterventionPlace = "pre_moe"
+    low_rank_dimension: int = 8
+    dropout: float = 0.0
+    act_fn: str | None = None  # e.g. "gelu", "relu", or None/"linear"
+    init_orth: bool = True  # if your rotate layer supports it
+
+    @pydantic.model_validator(mode="after")
+    def validate_interventions_config(self) -> Self:
+        assert self.low_rank_dimension >= 1, f"{self.low_rank_dimension=} cannot be less than 1"
+        return self
 
 
 class OlmoeInterventionsConfig(PretrainedConfig):

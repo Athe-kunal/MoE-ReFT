@@ -13,7 +13,7 @@
 """PyTorch OLMoE model."""
 
 import math
-from typing import Optional, Union
+from typing import Optional, Union, Sequence
 
 import torch
 import torch.nn.functional as F
@@ -37,9 +37,9 @@ from transformers.modeling_utils import PreTrainedModel
 from transformers.utils import auto_docstring, logging
 from transformers.utils.deprecation import deprecate_kwarg
 from moe_reft.configuration_olmoe import OlmoeInterventionsConfig, InterventionsConfig
-from moe_reft import interventions
+from moe_reft import interventions, configuration_olmoe
 
-InterventionTypeClass = {
+InterventionTypeRegistry = {
     "LoreftIntervention": interventions.LoreftIntervention,
     "DireftIntervention": interventions.DireftIntervention,
 }
@@ -657,6 +657,34 @@ class OlmoeSparseMoeBlock(nn.Module):
         return final_hidden_states, router_logits
 
 
+def build_intervention(
+    *,
+    icfg: InterventionsConfig,
+    layer_idx: int,
+    hidden_size: int,
+    place: configuration_olmoe.InterventionPlace,
+) -> nn.Module:
+    """Create the requested intervention or Identity if not applicable."""
+    if place not in icfg.intervention_places or not _interventions_based_layer_idx(icfg, layer_idx):
+        return nn.Identity()
+
+    # Enforce allowed types
+    if icfg.intervention_type not in InterventionTypeRegistry:
+        raise ValueError(
+            f"Unsupported intervention_type={icfg.intervention_type!r}. " f"Allowed: Loreft and Direft"
+        )
+
+    cls = InterventionTypeRegistry[icfg.intervention_type]
+    mod = cls(
+        embed_dim=hidden_size,
+        low_rank_dimension=icfg.low_rank_dimension,
+        dropout=icfg.dropout,
+        act_fn=icfg.act_fn,
+        init_orth=icfg.init_orth,
+    )
+    return mod
+
+
 class OlmoeDecoderLayer(GradientCheckpointingLayer):
     def __init__(self, config: OlmoeInterventionsConfig, layer_idx: int):
         super().__init__()
@@ -668,6 +696,16 @@ class OlmoeDecoderLayer(GradientCheckpointingLayer):
         self.mlp = OlmoeSparseMoeBlock(config)
         self.input_layernorm = OlmoeRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.post_attention_layernorm = OlmoeRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+
+        self.pre_moe_intervenetion: nn.Module = build_intervention(
+            icfg=config.intervention_config,
+            layer_idx=layer_idx,
+            hidden_size=config.hidden_size,
+            place="pre_moe",
+        )
+        self.after_moe_intervention: nn.Module = build_intervention(
+            icfg=config.intervention_config, layer_idx=layer_idx, hidden_size=config.hidden_size, place="after_moe"
+        )
 
     @deprecate_kwarg("past_key_value", new_name="past_key_values", version="4.58")
     def forward(
@@ -726,25 +764,16 @@ class OlmoeDecoderLayer(GradientCheckpointingLayer):
         )
         # residual connection
         hidden_states = residual + hidden_states
-        if self.interventions_config.intervention_place == "after_attention":
-            do_intervention = _intervention_handler(self.interventions_config, self.layer_idx)
-            if do_intervention:
-                intervention_type = InterventionTypeClass[self.interventions_config.intervention_type]
-                hidden_states = intervention_type(
-                    low_rank_dimension=self.interventions_config.low_rank_dimension,
-                ).forward(hidden_states)
+
+        hidden_states = self.pre_moe_intervenetion.forward(hidden_states)
         # Fully Connected
         residual = hidden_states
         hidden_states = self.post_attention_layernorm(hidden_states)
         hidden_states, router_logits = self.mlp(hidden_states)
         hidden_states = residual + hidden_states
-        if self.interventions_config.intervention_place == "after_moe":
-            do_intervention = _intervention_handler(self.interventions_config, self.layer_idx)
-            if do_intervention:
-                intervention_type = InterventionTypeClass[self.interventions_config.intervention_type]
-                hidden_states = intervention_type(
-                    low_rank_dimension=self.interventions_config.low_rank_dimension,
-                ).forward(hidden_states)
+
+        hidden_states = self.after_moe_intervention.forward(hidden_states)
+
         outputs = (hidden_states,)
 
         if output_attentions:
@@ -756,7 +785,7 @@ class OlmoeDecoderLayer(GradientCheckpointingLayer):
         return outputs
 
 
-def _intervention_handler(interventions_config: InterventionsConfig, layer_idx: int) -> bool:
+def _interventions_based_layer_idx(interventions_config: InterventionsConfig, layer_idx: int) -> bool:
     if interventions_config.intervention_layers == "all":
         return True
     elif interventions_config.intervention_layers == "even_only":

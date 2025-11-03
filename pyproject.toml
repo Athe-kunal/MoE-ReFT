@@ -24,6 +24,7 @@ dependencies = [
     "loguru>=0.7.3",
     "flash-attn>=2.8.3",
     "pyvene>=0.1.8",
+    "nnsight>=0.5.10",
 ]
 
 [project.optional-dependencies]
