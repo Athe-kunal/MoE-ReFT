@@ -10,35 +10,116 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """OLMoE model configuration"""
-import pydantic
+from moe_reft import interventions_config
 from transformers.configuration_utils import PretrainedConfig
-from transformers.modeling_rope_utils import rope_config_validation
+from transformers.modeling_rope_utils import (
+    rope_config_validation,
+)
 
-from typing import Literal, Self
-
-# Types for interventions
-InterventionLayers = Literal["all", "odd_only", "even_only", "alternate"]
-
-# Intervention place
-InterventionPlace = Literal["pre_moe", "after_moe"]
-
-# Intervention Type
-InterventionType = Literal["LoreftIntervention", "DireftIntervention"]
+from typing import Self, Optional, TypedDict
 
 
-class InterventionsConfig(pydantic.BaseModel):
-    intervention_type: InterventionType = "LoreftIntervention"
-    intervention_layers: InterventionLayers = "all"
-    intervention_places: InterventionPlace = "pre_moe"
-    low_rank_dimension: int = 8
-    dropout: float = 0.0
-    act_fn: str | None = None  # e.g. "gelu", "relu", or None/"linear"
-    init_orth: bool = True  # if your rotate layer supports it
+def standardize_rope_params(config, rope_theta: float | dict[str, float] | None = None):
+    """
+    Helper to standardize the config's rope params field by ensuring the params are defined for each
+    later type. For old model the fn will duplicate a single rope param in each layer type (backward compatibility)
+    """
+    rope_parameters = getattr(config, "rope_parameters", None)
+    layer_types = getattr(config, "layer_types", None)
+    if rope_theta is None:
+        rope_theta = getattr(config, "rope_theta", None)
 
-    @pydantic.model_validator(mode="after")
-    def validate_interventions_config(self) -> Self:
-        assert self.low_rank_dimension >= 1, f"{self.low_rank_dimension=} cannot be less than 1"
-        return self
+    # Case 1: one RoPE theat = one RoPE param per model without nesting
+    if not isinstance(rope_theta, dict):
+        if rope_parameters is None:
+            rope_parameters = {"rope_type": "default", "rope_theta": rope_theta}
+        else:
+            # BC: if there is a 'type' field, copy it it to 'rope_type'.
+            rope_type = rope_parameters.get("rope_type", rope_parameters.get("type", "default"))
+            rope_theta = rope_parameters.get("rope_theta") or rope_theta
+            rope_parameters.update({"rope_theta": rope_theta, "rope_type": rope_type})
+        config.rope_parameters = rope_parameters
+
+    # Case 2: different RoPE for each layer as nested dict
+    else:
+        rope_parameters_per_layer_type = {}
+        for layer_type in layer_types:
+            if rope_parameters is None:
+                rope_parameters_per_layer_type[layer_type] = {
+                    "rope_type": "default",
+                    "rope_theta": rope_theta[layer_type],
+                }
+            else:
+                is_field_in_new_format = any(layer_type in rope_parameters for layer_type in layer_types)
+                if not is_field_in_new_format:
+                    curr_rope_type = rope_parameters.get("rope_type", rope_parameters.get("type"))
+                    rope_parameters_per_layer_type[layer_type] = {
+                        **rope_parameters,
+                        "rope_type": curr_rope_type,
+                        "rope_theta": rope_theta[layer_type],
+                    }
+                else:
+                    curr_rope_type = rope_parameters[layer_type].get(
+                        "rope_type", rope_parameters[layer_type].get("type")
+                    )
+                    rope_parameters_per_layer_type[layer_type] = {
+                        **rope_parameters[layer_type],
+                        "rope_type": curr_rope_type,
+                        "rope_theta": rope_theta[layer_type],
+                    }
+            config.rope_parameters = rope_parameters_per_layer_type
+
+
+class RopeParameters(TypedDict):
+    """
+    Args:
+        rope_theta (`float`):
+            The base period of the RoPE embeddings.
+        rope_type (`str`, *optional*, defaults to "default"):
+            The sub-variant of RoPE to use. Can be one of ['default', 'linear', 'dynamic', 'yarn', 'longrope',
+            'llama3'], with 'default' being the original RoPE implementation.
+        factor (`float`, *optional*):
+            Used with all rope types except 'default'. The scaling factor to apply to the RoPE embeddings. In
+            most scaling types, a `factor` of x will enable the model to handle sequences of length x *
+            original maximum pre-trained length.
+        original_max_position_embeddings (`int`, *optional*):
+            Used with 'dynamic', 'longrope' and 'llama3'. The original max position embeddings used during
+            pretraining.
+        attention_factor (`float`, *optional*):
+            Used with 'yarn' and 'longrope'. The scaling factor to be applied on the attention
+            computation. If unspecified, it defaults to value recommended by the implementation, using the
+            `factor` field to infer the suggested value.
+        beta_fast (`float`, *optional*):
+            Only used with 'yarn'. Parameter to set the boundary for extrapolation (only) in the linear
+            ramp function. If unspecified, it defaults to 32.
+        beta_slow (`float`, *optional*):
+            Only used with 'yarn'. Parameter to set the boundary for interpolation (only) in the linear
+            ramp function. If unspecified, it defaults to 1.
+        short_factor (`list[float]`, *optional*):
+            Only used with 'longrope'. The scaling factor to be applied to short contexts (<
+            `original_max_position_embeddings`). Must be a list of numbers with the same length as the hidden
+            size divided by the number of attention heads divided by 2
+        long_factor (`list[float]`, *optional*):
+            Only used with 'longrope'. The scaling factor to be applied to long contexts (<
+            `original_max_position_embeddings`). Must be a list of numbers with the same length as the hidden
+            size divided by the number of attention heads divided by 2
+        low_freq_factor (`float`, *optional*):
+            Only used with 'llama3'. Scaling factor applied to low frequency components of the RoPE
+        high_freq_factor (`float`, *optional*):
+            Only used with 'llama3'. Scaling factor applied to high frequency components of the RoPE
+    """
+
+    rope_theta: float
+    rope_type: Optional[str]
+    factor: Optional[float]
+    original_max_position_embeddings: Optional[int]
+    attention_factor: Optional[float]
+    beta_fast: Optional[float]
+    beta_slow: Optional[float]
+    short_factor: Optional[list[float]]
+    long_factor: Optional[list[float]]
+    low_freq_factor: Optional[float]
+    high_freq_factor: Optional[float]
 
 
 class OlmoeInterventionsConfig(PretrainedConfig):
@@ -137,10 +218,10 @@ class OlmoeInterventionsConfig(PretrainedConfig):
 
     def __init__(
         self,
-        interventions_config: InterventionsConfig = InterventionsConfig(),
+        interventions_config: interventions_config.InterventionsConfig = interventions_config.InterventionsConfig(),
         vocab_size=50304,
         hidden_size=2048,
-        intermediate_size=2048,
+        intermediate_size=1024,
         num_hidden_layers=16,
         num_attention_heads=16,
         num_key_value_heads=None,
@@ -156,6 +237,7 @@ class OlmoeInterventionsConfig(PretrainedConfig):
         rope_theta=10000.0,
         rope_scaling=None,
         attention_bias=False,
+        rope_parameters: Optional[RopeParameters | dict[str, RopeParameters]] = None,
         attention_dropout=0.0,
         clip_qkv=None,
         num_experts_per_tok=8,
@@ -171,6 +253,7 @@ class OlmoeInterventionsConfig(PretrainedConfig):
         self.intermediate_size = intermediate_size
         self.num_hidden_layers = num_hidden_layers
         self.num_attention_heads = num_attention_heads
+        self.rope_parameters = rope_parameters
 
         # Intervention parameters
         self.intervention_config = interventions_config
@@ -196,8 +279,12 @@ class OlmoeInterventionsConfig(PretrainedConfig):
         self.norm_topk_prob = norm_topk_prob
         # Validate the correctness of rotary position embeddings parameters
         # BC: if there is a 'type' field, move it to 'rope_type'.
-        if self.rope_scaling is not None and "type" in self.rope_scaling:
-            self.rope_scaling["rope_type"] = self.rope_scaling["type"]
+        rope_scaling = kwargs.pop("rope_scaling", None)
+        self.rope_parameters = rope_scaling or rope_parameters
+
+        # Validate the correctness of rotary position embeddings parameters
+        rope_theta = kwargs.get("rope_theta", 10000.0)
+        standardize_rope_params(self, rope_theta=rope_theta)
         rope_config_validation(self)
 
         super().__init__(

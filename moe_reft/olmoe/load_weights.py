@@ -51,7 +51,6 @@ def build_partial_state_dict(
     device: torch.device | None = None,
     dtype: torch.dtype | None = None,
 ) -> tuple[dict[str, torch.Tensor], TransferReport]:
-
     dst_sd: MutableMapping[str, torch.Tensor] = dst_module.state_dict()
     out: dict[str, torch.Tensor] = {}
 

@@ -36,8 +36,8 @@ from transformers.processing_utils import Unpack
 from transformers.utils import auto_docstring, logging, TransformersKwargs
 from transformers.utils.generic import OutputRecorder, check_model_inputs
 from transformers.utils.deprecation import deprecate_kwarg
-from moe_reft.configuration_olmoe import OlmoeInterventionsConfig, InterventionsConfig
-from moe_reft import interventions, configuration_olmoe
+from moe_reft.olmoe import configuration_olmoe
+from moe_reft import interventions, interventions_config
 
 InterventionTypeRegistry = {
     "LoreftIntervention": interventions.LoreftIntervention,
@@ -600,10 +600,10 @@ class OlmoeSparseMoeBlock(nn.Module):
 
 def build_intervention(
     *,
-    icfg: InterventionsConfig,
+    icfg: interventions_config.InterventionsConfig,
     layer_idx: int,
     hidden_size: int,
-    place: configuration_olmoe.InterventionPlace,
+    place: interventions_config.InterventionPlace,
 ) -> nn.Module:
     """Create the requested intervention or Identity if not applicable."""
     if place not in icfg.intervention_places or not _interventions_based_layer_idx(icfg, layer_idx):
@@ -627,7 +627,7 @@ def build_intervention(
 
 
 class OlmoeDecoderLayer(GradientCheckpointingLayer):
-    def __init__(self, config: OlmoeInterventionsConfig, layer_idx: int):
+    def __init__(self, config: configuration_olmoe.OlmoeInterventionsConfig, layer_idx: int):
         super().__init__()
         self.hidden_size = config.hidden_size
 
@@ -726,7 +726,9 @@ class OlmoeDecoderLayer(GradientCheckpointingLayer):
         return outputs
 
 
-def _interventions_based_layer_idx(interventions_config: InterventionsConfig, layer_idx: int) -> bool:
+def _interventions_based_layer_idx(
+    interventions_config: interventions_config.InterventionsConfig, layer_idx: int
+) -> bool:
     if interventions_config.intervention_layers == "all":
         return True
     elif interventions_config.intervention_layers == "even_only":
@@ -775,7 +777,7 @@ class OlmoeModel(OlmoePreTrainedModel):
         # Initialize weights and apply final processing
         self.post_init()
 
-    @check_model_inputs()
+    @check_model_inputs
     @auto_docstring
     def forward(
         self,

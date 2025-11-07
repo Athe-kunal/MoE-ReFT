@@ -123,7 +123,6 @@ def train_sft_interventions_only(
     dataloader: DataLoader,
     train_config: TrainConfig,
 ) -> None:
-
     device = train_config.device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
     model.train()
