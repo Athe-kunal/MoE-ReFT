@@ -85,7 +85,9 @@ def build_partial_state_dict(
         dst_t: torch.Tensor = dst_sd[matched_dst]
         if src_tensor.shape != dst_t.shape:
             report.skipped_shape.append((matched_dst, src_tensor.shape, dst_t.shape))
-            logger.error(f"The shape for {src_name=} with {src_tensor.shape=} didn't match with {dst_t.shape=}")
+            logger.error(
+                f"The shape for {src_name=} with {src_tensor.shape=} didn't match with for {matched_dst=} and shape {dst_t.shape=}"
+            )
             continue
         if dtype is not None or device is not None:
             src_tensor = src_tensor.to(
@@ -134,7 +136,7 @@ def load_hf_into_custom_model(
     # 1) Load HF model & grab its state dict
     hf_model: PreTrainedModel = AutoModelForCausalLM.from_pretrained(
         hf_model_name_or_path,
-        torch_dtype=map_dtype if map_dtype is not None else None,
+        dtype=map_dtype if map_dtype is not None else None,
         trust_remote_code=trust_remote_code,
     )
     src_sd = hf_model.state_dict()
@@ -172,7 +174,7 @@ if __name__ == "__main__":
 
     # 2) Load HF weights into the overlapping parts, skipping interventions
     report = load_hf_into_custom_model(
-        hf_model_name_or_path="allenai/OLMoE-1B-7B-0125-Instruct",  # or your source
+        hf_model_name_or_path="allenai/OLMoE-1B-7B-0125-Instruct",
         custom_model=custom_model,
         rename_rules=[("model.", ""), ("transformer.", ""), ("layers.", "layers.")],  # tweak as needed
         intervention_patterns=["*.pre_moe_intervention.*", "*.after_moe_intervention.*"],

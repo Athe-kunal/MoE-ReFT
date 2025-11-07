@@ -163,7 +163,6 @@ class OlmoeInterventionsConfig(PretrainedConfig):
         output_router_logits=False,
         router_aux_loss_coef=0.01,
         norm_topk_prob=False,
-        # Intervention related parameters
         **kwargs,
     ):
         self.vocab_size = vocab_size
@@ -210,4 +209,4 @@ class OlmoeInterventionsConfig(PretrainedConfig):
         )
 
 
-__all__ = ["OlmoeConfig"]
+__all__ = ["OlmoeInterventionsConfig"]
