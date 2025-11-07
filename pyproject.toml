@@ -25,6 +25,7 @@ dependencies = [
     "flash-attn>=2.8.3",
     "pyvene>=0.1.8",
     "nnsight>=0.5.10",
+    "black>=23.12.1",
 ]
 
 [project.optional-dependencies]

@@ -1948,6 +1948,7 @@ version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "ai2-olmo-core" },
+    { name = "black" },
     { name = "boto3" },
     { name = "cached-path" },
     { name = "datasets" },
@@ -2007,6 +2008,7 @@ requires-dist = [
     { name = "ai2-olmo", extras = ["dev", "train"], marker = "extra == 'all'" },
     { name = "ai2-olmo-core", specifier = "==0.1.0" },
     { name = "beaker-gantry", marker = "extra == 'train'" },
+    { name = "black", specifier = ">=23.12.1" },
     { name = "black", marker = "extra == 'dev'", specifier = ">=23.1,<24.0" },
     { name = "boto3" },
     { name = "build", marker = "extra == 'dev'" },
