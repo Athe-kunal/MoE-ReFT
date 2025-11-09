@@ -1,5 +1,6 @@
 train:
-  epochs: 1
+  save_path: "dry_run/"
+  epochs: 2
   learning_rate: 5.0e-5
   grad_accum_steps: 1
   max_grad_norm: 1.0
@@ -9,6 +10,8 @@ train:
   ignore_index: -100
   num_warmup_steps: 0
   device: null                   # e.g. "cuda", "cuda:0", or null for auto
+  batch_size: 32
+  test_batch_size: 64
 
 interventions:
   intervention_type: "LoreftIntervention"   # or "DireftIntervention"
