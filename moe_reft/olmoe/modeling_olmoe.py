@@ -661,7 +661,8 @@ class OlmoeDecoderLayer(GradientCheckpointingLayer):
         cache_position: Optional[torch.LongTensor] = None,
         position_embeddings: Optional[tuple[torch.Tensor, torch.Tensor]] = None,
         **kwargs,
-    ) -> tuple[torch.FloatTensor, Optional[tuple[torch.FloatTensor, torch.FloatTensor]]]:
+    ) -> tuple[torch.FloatTensor, Optional[torch.FloatTensor]]:
+        # ) -> tuple[torch.FloatTensor, Optional[tuple[torch.FloatTensor, torch.FloatTensor]]]:
         """
         Args:
             hidden_states (`torch.FloatTensor`): input to the layer of shape `(batch, seq_len, embed_dim)`
@@ -715,15 +716,10 @@ class OlmoeDecoderLayer(GradientCheckpointingLayer):
 
         hidden_states = self.after_moe_intervention.forward(hidden_states)
 
-        outputs = (hidden_states,)
-
-        if output_attentions:
-            outputs += (self_attn_weights,)
-
         if output_router_logits:
-            outputs += (router_logits,)
+            return hidden_states, router_logits
 
-        return outputs
+        return hidden_states, None
 
 
 def _interventions_based_layer_idx(
@@ -820,9 +816,9 @@ class OlmoeModel(OlmoePreTrainedModel):
 
         # create position embeddings to be shared across the decoder layers
         position_embeddings = self.rotary_emb(hidden_states, position_ids)
-
+        all_router_logits: list[torch.FloatTensor | None] = []
         for decoder_layer in self.layers[: self.config.num_hidden_layers]:
-            hidden_states = decoder_layer(
+            hidden_states, router_logits = decoder_layer(
                 hidden_states,
                 position_embeddings=position_embeddings,
                 attention_mask=causal_mask,
@@ -832,12 +828,14 @@ class OlmoeModel(OlmoePreTrainedModel):
                 cache_position=cache_position,
                 **kwargs,
             )
+            all_router_logits.append(router_logits)
 
         hidden_states = self.norm(hidden_states)
 
         return MoeModelOutputWithPast(  # only diff with Mistral is the output type, we need MoE
             last_hidden_state=hidden_states,
             past_key_values=past_key_values,
+            router_logits=tuple(all_router_logits),
         )
 
 

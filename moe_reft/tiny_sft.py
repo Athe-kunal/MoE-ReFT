@@ -60,7 +60,7 @@ class TinySFTDataset(Dataset):
 
 def build_tiny_sft_dataloader(
     *,
-    model_name: str = "gpt2",
+    model_name: str,
     batch_size: int = 2,
     max_length: int = 64,
     ignore_index: int = -100,

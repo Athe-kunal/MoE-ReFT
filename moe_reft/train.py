@@ -112,7 +112,8 @@ def train_sft(
             if "labels" not in model_inputs:
                 model_inputs["labels"] = labels
             total_tokens += model_inputs["input_ids"].size(0)
-            outputs = model(**model_inputs)
+            with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                outputs = model(**model_inputs)
 
             if hasattr(outputs, "loss") and outputs.loss is not None:
                 loss = outputs.loss
