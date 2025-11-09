@@ -1,0 +1,62 @@
+train:
+  epochs: 1
+  learning_rate: 5.0e-5
+  grad_accum_steps: 1
+  max_grad_norm: 1.0
+  amp: true
+  amp_dtype: "bfloat16"          # mapped to torch.bfloat16 in code
+  log_every: 50
+  ignore_index: -100
+  num_warmup_steps: 0
+  device: null                   # e.g. "cuda", "cuda:0", or null for auto
+
+interventions:
+  intervention_type: "LoreftIntervention"   # or "DireftIntervention"
+  intervention_layers: "all"                # "all" | "odd_only" | "even_only" | "alternate"
+  intervention_places: "pre_moe"            # "pre_moe" | "after_moe"
+  low_rank_dimension: 8
+  dropout: 0.0
+  act_fn: null                              # "gelu", "relu", or null/linear
+  init_orth: true
+
+model:
+  vocab_size: 50304
+  hidden_size: 2048
+  intermediate_size: 1024
+  num_hidden_layers: 16
+  num_attention_heads: 16
+  num_key_value_heads: null
+  hidden_act: "silu"
+  max_position_embeddings: 4096
+  initializer_range: 0.02
+  rms_norm_eps: 1.0e-5
+  use_cache: true
+  pad_token_id: 1
+  bos_token_id: null
+  eos_token_id: 50279
+  tie_word_embeddings: false
+
+  rope_theta: 10000.0
+  rope_scaling: null              # or {type: "linear", factor: 2.0} etc.
+  attention_bias: false
+  attention_dropout: 0.0
+  clip_qkv: null
+  num_experts_per_tok: 8
+  num_experts: 64
+  output_router_logits: false
+  router_aux_loss_coef: 0.01
+  norm_topk_prob: false
+
+  # Optional RoPE parameters (can be null or omitted)
+  rope_parameters:
+    rope_theta: 10000.0
+    rope_type: null
+    factor: null
+    original_max_position_embeddings: null
+    attention_factor: null
+    beta_fast: null
+    beta_slow: null
+    short_factor: null        # or [1.0, 1.0, ...]
+    long_factor: null         # or [1.0, 1.0, ...]
+    low_freq_factor: null
+    high_freq_factor: null

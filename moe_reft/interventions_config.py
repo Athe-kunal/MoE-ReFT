@@ -1,3 +1,4 @@
+import torch
 import pydantic
 from typing import Literal, Self
 
@@ -9,6 +10,12 @@ InterventionPlace = Literal["pre_moe", "after_moe"]
 
 # Intervention Type
 InterventionType = Literal["LoreftIntervention", "DireftIntervention"]
+
+INTERVENTION_PATTERNS = [
+    "*.pre_moe_intervention.*",
+    "*.after_moe_intervention.*",
+    "*.pre_moe_intervenetion.*",  # typo fallback
+]
 
 
 class InterventionsConfig(pydantic.BaseModel):
@@ -24,3 +31,7 @@ class InterventionsConfig(pydantic.BaseModel):
     def validate_interventions_config(self) -> Self:
         assert self.low_rank_dimension >= 1, f"{self.low_rank_dimension=} cannot be less than 1"
         return self
+
+    def to_json(self, **kwargs) -> str:
+        """Convenient shortcut for JSON serialization."""
+        return self.model_dump_json(indent=2, **kwargs)

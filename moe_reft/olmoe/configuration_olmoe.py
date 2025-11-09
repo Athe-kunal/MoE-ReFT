@@ -295,5 +295,31 @@ class OlmoeInterventionsConfig(PretrainedConfig):
             **kwargs,
         )
 
+    def to_dict(self) -> dict:
+        """
+        Override PretrainedConfig.to_dict to ensure intervention_config
+        is converted to a plain JSON-serializable dict.
+        """
+        output = super().to_dict()
+
+        interv = getattr(self, "intervention_config", None)
+        if isinstance(interv, interventions_config.InterventionsConfig):
+            output["intervention_config"] = interv.model_dump()
+        else:
+            # already a dict or None
+            output["intervention_config"] = interv
+
+        return output
+
+    @classmethod
+    def from_dict(cls, config_dict: dict, **kwargs):
+        """
+        Allow loading back from a dict where intervention_config is a plain dict.
+        """
+        interv_raw = config_dict.get("intervention_config", None)
+        if isinstance(interv_raw, dict):
+            config_dict["intervention_config"] = interventions_config.InterventionsConfig(**interv_raw)
+        return super().from_dict(config_dict, **kwargs)
+
 
 __all__ = ["OlmoeInterventionsConfig"]

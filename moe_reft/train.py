@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Iterable, Generator, Any
+from typing import Any
 import os
 import dataclasses
 import torch
@@ -9,13 +9,12 @@ from torch.optim import Optimizer
 from torch.utils.data import DataLoader
 from loguru import logger
 from transformers import get_scheduler
+from moe_reft import read_config
 
-from moe_reft.interventions import LoreftIntervention, DireftIntervention  # adjust path
+from moe_reft import interventions_config, tiny_sft
+from moe_reft.olmoe import modeling_olmoe, configuration_olmoe, load_weights
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-
-
-_INTERVENTION_TYPES = (LoreftIntervention, DireftIntervention)
 
 
 @dataclasses.dataclass
@@ -25,48 +24,11 @@ class TrainConfig:
     grad_accum_steps: int = 1
     max_grad_norm: float = 1.0
     amp: bool = True
-    amp_dtype: torch.dtype = torch.bfloat16  # use torch.float16 on older GPUs if needed
+    amp_dtype: torch.dtype = torch.bfloat16
     log_every: int = 50
     ignore_index: int = -100  # standard for HF causal LMs
     num_warmup_steps: int = 0
     device: torch.device | None = None  # auto-detected if None
-
-
-def is_non_identity_intervention(m: nn.Module) -> bool:
-    """True if module is one of the known intervention types and has parameters."""
-    if isinstance(m, nn.Identity):
-        return False
-    if _INTERVENTION_TYPES and isinstance(m, _INTERVENTION_TYPES):
-        # double-check it actually has parameters
-        return any(p.requires_grad or p.is_leaf for p in m.parameters(recurse=True))
-    # Fallback when classes aren't importable: match by attribute name (robust enough).
-    return False  # prefer class-based detection when available
-
-
-def iter_target_interventions(model: nn.Module) -> Generator[nn.Module, None, None]:
-    """
-    Yield all submodules that are named 'pre_moe_intervention' or 'after_moe_intervention'
-    and are not nn.Identity.
-    """
-    for name, module in model.named_modules():
-        if name.endswith(".pre_moe_intervention") or name.endswith(".after_moe_intervention"):
-            if not isinstance(module, nn.Identity):
-                yield module
-
-
-def collect_intervention_params(model: nn.Module) -> Iterable[nn.Parameter]:
-    """Collect parameters from the two intervention slots only (skips Identity)."""
-    for m in iter_target_interventions(model):
-        for p in m.parameters():
-            yield p
-
-
-def freeze_all_unfreeze_interventions(model: nn.Module) -> None:
-    """Freeze everything, then unfreeze just the intervention params."""
-    for p in model.parameters():
-        p.requires_grad = False
-    for p in collect_intervention_params(model):
-        p.requires_grad = True
 
 
 def _unpack_batch(
@@ -101,7 +63,7 @@ def _manual_shifted_ce_loss(
     return loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
 
 
-def build_intervention_optimizer(
+def build_optimizer_from_requires_grad(
     model: nn.Module,
     *,
     lr: float = 1e-4,
@@ -109,16 +71,20 @@ def build_intervention_optimizer(
     betas: tuple[float, float] = (0.9, 0.999),
     eps: float = 1e-8,
 ) -> Optimizer:
-    params = list(collect_intervention_params(model))
+    """Build an optimizer using only parameters with requires_grad=True."""
+    params: list[nn.Parameter] = [p for p in model.parameters() if p.requires_grad]
+
     if not params:
         raise RuntimeError(
-            "No intervention parameters found. Ensure pre_moe_intervention/after_moe_intervention "
-            "are not nn.Identity and are instantiated in __init__."
+            "No trainable parameters found (requires_grad=True). "
+            "Did you forget to unfreeze the intervention layers?"
         )
+
+    logger.info(f"Building optimizer over {sum(p.numel() for p in params):,} trainable params")
     return torch.optim.AdamW(params, lr=lr, weight_decay=weight_decay, betas=betas, eps=eps)
 
 
-def train_sft_interventions_only(
+def train_sft(
     model: nn.Module,
     dataloader: DataLoader,
     train_config: TrainConfig,
@@ -127,8 +93,14 @@ def train_sft_interventions_only(
     model.to(device)
     model.train()
 
-    optimizer = build_intervention_optimizer(model=model, lr=train_config.learning_rate)
-    scheduler = get_scheduler("cosine", optimizer=optimizer, num_warmup_steps=train_config.num_warmup_steps)
+    optimizer = build_optimizer_from_requires_grad(model=model, lr=train_config.learning_rate)
+    num_training_steps = (len(dataloader) // train_config.grad_accum_steps) * train_config.epochs
+    scheduler = get_scheduler(
+        "cosine",
+        optimizer=optimizer,
+        num_warmup_steps=train_config.num_warmup_steps,
+        num_training_steps=num_training_steps,
+    )
 
     global_step: int = 0
     running_loss: float = 0.0
@@ -161,3 +133,39 @@ def train_sft_interventions_only(
                 logger.info(f"Epoch {epoch} | Step {global_step} | Loss: {avg_loss:.4f}")
                 running_loss = 0.0
         logger.info(f"Completed for epoch {epoch}")
+
+
+def run_main(config_path: str) -> None:
+    train_config, interventions_config_, olmoe_config = read_config.load_all_configs(config_path)
+
+    custom_model = modeling_olmoe.OlmoeForCausalLM(
+        configuration_olmoe.OlmoeInterventionsConfig(interventios_config=interventions_config_)
+    )
+
+    # 2) Load HF weights into the overlapping parts, skipping interventions
+    report = load_weights.load_hf_into_custom_model(
+        hf_model_name_or_path="allenai/OLMoE-1B-7B-0125-Instruct",
+        custom_model=custom_model,
+        intervention_patterns=["*.pre_moe_intervention.*", "*.after_moe_intervention.*"],
+        map_dtype=torch.bfloat16,  # optional casting
+        map_device=torch.device("cuda"),  # optional device move
+        trust_remote_code=False,
+    )
+    logger.info(f"{report.summary()}")
+
+    for name, param in custom_model.named_parameters():
+        if load_weights._matches_any(name, interventions_config.INTERVENTION_PATTERNS):
+            param.requires_grad = True
+
+    # 5) Print parameter stats
+    total_params, trainable_params = load_weights._count_parameters(custom_model)
+    print(f"Total parameters:     {total_params}")
+    print(f"Trainable parameters: {trainable_params}")
+
+    logger.info(f"Parameter stats — total: {total_params}, trainable: {trainable_params}")
+    dataloader, _ = tiny_sft.build_tiny_sft_dataloader(model_name="allenai/OLMoE-1B-7B-0125-Instruct")
+    train_sft(model=custom_model, dataloader=dataloader, train_config=train_config)
+
+
+if __name__ == "__main__":
+    run_main("moe_reft/configs/olmoe.yaml")
