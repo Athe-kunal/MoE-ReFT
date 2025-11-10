@@ -1,17 +1,12 @@
 from __future__ import annotations
 
 from typing import Optional, Tuple
-import json
-
 import torch
 from omegaconf import OmegaConf
 
-from moe_reft.train import TrainConfig
+from moe_reft.datamodels import TrainConfig
 from moe_reft import interventions_config
 from moe_reft.olmoe import configuration_olmoe
-
-# import your own definitions
-# from your_module import TrainConfig, InterventionsConfig, RopeParameters, OlmoeInterventionsConfig
 
 
 def _dtype_from_str(dtype_str: str) -> torch.dtype:
@@ -54,6 +49,7 @@ def load_all_configs(
         device_obj = torch.device(str(train_section.device))
 
     train_config = TrainConfig(
+        save_dir=str(train_section.save_dir),
         epochs=int(train_section.epochs),
         learning_rate=float(train_section.learning_rate),
         grad_accum_steps=int(train_section.grad_accum_steps),

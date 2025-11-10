@@ -1,25 +1,25 @@
 train:
-  save_path: "dry_run/"
-  epochs: 2
+  save_dir: "dry_run/"
+  epochs: 1
   learning_rate: 5.0e-5
   grad_accum_steps: 1
   max_grad_norm: 1.0
   amp: true
-  amp_dtype: "bfloat16"          # mapped to torch.bfloat16 in code
+  amp_dtype: "bfloat16" # mapped to torch.bfloat16 in code
   log_every: 50
   ignore_index: -100
-  num_warmup_steps: 0
-  device: null                   # e.g. "cuda", "cuda:0", or null for auto
+  num_warmup_steps: 1
+  device: null # e.g. "cuda", "cuda:0", or null for auto
   batch_size: 32
   test_batch_size: 64
 
 interventions:
-  intervention_type: "LoreftIntervention"   # or "DireftIntervention"
-  intervention_layers: "all"                # "all" | "odd_only" | "even_only" | "alternate"
-  intervention_places: "pre_moe"            # "pre_moe" | "after_moe"
+  intervention_type: "LoreftIntervention" # or "DireftIntervention"
+  intervention_layers: "all" # "all" | "odd_only" | "even_only" | "alternate"
+  intervention_places: "pre_moe" # "pre_moe" | "after_moe"
   low_rank_dimension: 8
   dropout: 0.0
-  act_fn: null                              # "gelu", "relu", or null/linear
+  act_fn: null # "gelu", "relu", or null/linear
   init_orth: true
 
 model:
@@ -40,7 +40,7 @@ model:
   tie_word_embeddings: false
 
   rope_theta: 10000.0
-  rope_scaling: null              # or {type: "linear", factor: 2.0} etc.
+  rope_scaling: null # or {type: "linear", factor: 2.0} etc.
   attention_bias: false
   attention_dropout: 0.0
   clip_qkv: null
@@ -59,7 +59,7 @@ model:
     attention_factor: null
     beta_fast: null
     beta_slow: null
-    short_factor: null        # or [1.0, 1.0, ...]
-    long_factor: null         # or [1.0, 1.0, ...]
+    short_factor: null # or [1.0, 1.0, ...]
+    long_factor: null # or [1.0, 1.0, ...]
     low_freq_factor: null
     high_freq_factor: null

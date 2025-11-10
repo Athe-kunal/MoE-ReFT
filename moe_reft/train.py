@@ -2,54 +2,26 @@ from __future__ import annotations
 
 from typing import Any
 import os
-import dataclasses
 import torch
 from torch import nn
-import tqdm
-import datetime
+
 from torch.optim import Optimizer
 from torch.utils.data import DataLoader
 from loguru import logger
-from transformers import get_scheduler
 import torch.distributed as dist
 import torch.optim as optim
-import time
+from torch.nn.parallel import DistributedDataParallel as DDP
 
-from torch.distributed.fsdp import (
-    FullyShardedDataParallel as FSDP,
-    MixedPrecision,
-    BackwardPrefetch,
-    ShardingStrategy,
-    FullStateDictConfig,
-    StateDictType,
-)
+
 from torch.utils.data import Dataset
 from torch.utils.data.distributed import DistributedSampler
 
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
-from moe_reft import read_config
 
-from moe_reft import interventions_config, tiny_sft
+from moe_reft import interventions_config, tiny_sft, read_config, datamodels
 from moe_reft.olmoe import modeling_olmoe, configuration_olmoe, load_weights
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-
-
-@dataclasses.dataclass
-class TrainConfig:
-    save_path: str
-    epochs: int = 1
-    learning_rate: float = 5e-5
-    grad_accum_steps: int = 1
-    max_grad_norm: float = 1.0
-    amp: bool = True
-    amp_dtype: torch.dtype = torch.bfloat16
-    log_every: int = 50
-    ignore_index: int = -100  # standard for HF causal LMs
-    num_warmup_steps: int = 0
-    device: torch.device | None = None  # auto-detected if None
-    batch_size: int = 32
-    test_batch_size: int = 64
 
 
 def _unpack_batch(
@@ -105,19 +77,14 @@ def build_optimizer_from_requires_grad(
     return torch.optim.AdamW(params, lr=lr, weight_decay=weight_decay, betas=betas, eps=eps)
 
 
-def train_sft(model: nn.Module, dataloader: DataLoader, train_config: TrainConfig, save_path: str) -> None:
+def train_sft(model: nn.Module, dataloader: DataLoader, train_config: datamodels.TrainConfig) -> None:
     device = train_config.device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
     model.train()
 
     optimizer = build_optimizer_from_requires_grad(model=model, lr=train_config.learning_rate)
     num_training_steps = (len(dataloader) // train_config.grad_accum_steps) * train_config.epochs
-    scheduler = get_scheduler(
-        "cosine",
-        optimizer=optimizer,
-        num_warmup_steps=train_config.num_warmup_steps,
-        num_training_steps=num_training_steps,
-    )
+    scheduler = CosineAnnealingWarmRestarts(optimizer, T_0=train_config.num_warmup_steps)
 
     global_step: int = 0
     running_loss: float = 0.0
@@ -150,11 +117,13 @@ def train_sft(model: nn.Module, dataloader: DataLoader, train_config: TrainConfi
                 avg_loss = running_loss / train_config.log_every
                 logger.info(f"Epoch {epoch} | Step {global_step} | Loss: {avg_loss:.4f}")
                 running_loss = 0.0
+            optimizer.zero_grad()
         logger.info(f"Completed for epoch {epoch}")
-    torch.save(model, save_path)
+    torch.save(model, train_config.save_dir + "model.pt")
 
 
 def setup():
+
     dist.init_process_group("nccl")
 
 
@@ -162,216 +131,182 @@ def cleanup():
     dist.destroy_process_group()
 
 
-def get_date_of_run():
-    """create date and time for file save uniqueness
-    example: 2022-05-07-08:31:12_PM'
-    """
-    date_of_run = datetime.datetime.now().strftime("%Y-%m-%d-%I:%M:%S_%p")
-    print(f"--> current date and time of run = {date_of_run}")
-    return date_of_run
-
-
-def format_metrics_to_gb(item):
-    """quick function to format numbers to gigabyte and round to 4 digit precision"""
-    metric_num = item / 10e9
-    metric_num = round(metric_num, ndigits=4)
-    return metric_num
-
-
-def train(
-    model: nn.Module,
-    rank: int,
-    train_loader: DataLoader,
-    optimizer: Optimizer,
-    epoch: int,
-    sampler=None,
-):
-    model.train()
-    local_rank = int(os.environ["LOCAL_RANK"])
-    fsdp_loss = torch.zeros(2).to(local_rank)
-
-    if sampler:
-        sampler.set_epoch(epoch)
-    if rank == 0:
-        inner_pbar = tqdm.tqdm(range(len(train_loader)), colour="blue", desc="r0 Training Epoch")
-    for batch in train_loader:
-        for key in batch.keys():
-            batch[key] = batch[key].to(local_rank)
-        optimizer.zero_grad()
-        output = model(
-            input_ids=batch["source_ids"], attention_mask=batch["source_mask"], labels=batch["target_ids"]
-        )
-        loss = output["loss"]
-        loss.backward()
-        optimizer.step()
-        fsdp_loss[0] += loss.item()
-        fsdp_loss[1] += len(batch)
-        if rank == 0:
-            inner_pbar.update(1)
-
-    dist.all_reduce(fsdp_loss, op=dist.ReduceOp.SUM)
-    train_accuracy = fsdp_loss[0] / fsdp_loss[1]
-
-    if rank == 0:
-        inner_pbar.close()
-        print(f"Train Epoch: \t{epoch}, Loss: \t{train_accuracy:.4f}")
-    return train_accuracy
-
-
-def validation(model: nn.Module, rank: int, val_loader: DataLoader):
-    model.eval()
-    correct = 0
-    local_rank = int(os.environ["LOCAL_RANK"])
-    fsdp_loss = torch.zeros(3).to(local_rank)
-    if rank == 0:
-        inner_pbar = tqdm.tqdm(range(len(val_loader)), colour="green", desc="Validation Epoch")
-    with torch.no_grad():
-        for batch in val_loader:
-            for key in batch.keys():
-                batch[key] = batch[key].to(local_rank)
-            output = model(
-                input_ids=batch["source_ids"], attention_mask=batch["source_mask"], labels=batch["target_ids"]
-            )
-            fsdp_loss[0] += output["loss"].item()  # sum up batch loss
-            fsdp_loss[1] += len(batch)
-
-            if rank == 0:
-                inner_pbar.update(1)
-
-    dist.all_reduce(fsdp_loss, op=dist.ReduceOp.SUM)
-    val_loss = fsdp_loss[0] / fsdp_loss[1]
-    if rank == 0:
-        inner_pbar.close()
-        print(f"Validation Loss: {val_loss:.4f}")
-    return val_loss
-
-
-def train_sft_fsdp(
+def train_sft_ddp(
     model: nn.Module,
     train_dataset: Dataset,
     val_dataset: Dataset,
-    train_config: TrainConfig,
+    train_config: datamodels.TrainConfig,
 ) -> None:
-    model.train()
+    # Assume setup() does dist.init_process_group(...)
+    setup()
+
     local_rank = int(os.environ["LOCAL_RANK"])
     rank = int(os.environ["RANK"])
     world_size = int(os.environ["WORLD_SIZE"])
 
-    sharding_strategy: ShardingStrategy = ShardingStrategy.NO_SHARD  # for Zero2 and FULL_SHARD for Zero3
+    # Set current device and move model
     torch.cuda.set_device(local_rank)
-    # init_start_event = torch.cuda.Event(enable_timing=True)
-    # init_end_event = torch.cuda.Event(enable_timing=True)
+    device = torch.device("cuda", local_rank)
+    model.to(device)
 
-    # init_start_event.record()
-
-    bfSixteen = MixedPrecision(
-        param_dtype=torch.bfloat16,
-        # Gradient communication precision.
-        reduce_dtype=torch.bfloat16,
-        # Buffer precision.
-        buffer_dtype=torch.bfloat16,
-    )
-
-    model = FSDP(
+    # IMPORTANT: use local_rank for device_ids/output_device
+    ddp_model = DDP(
         model,
-        mixed_precision=bfSixteen,
-        sharding_strategy=sharding_strategy,
-        device_id=torch.cuda.current_device(),
-        backward_prefetch=BackwardPrefetch.BACKWARD_PRE,
+        device_ids=[local_rank],
+        output_device=local_rank,
+        find_unused_parameters=False,  # or True if needed
     )
 
-    sampler1 = DistributedSampler(train_dataset, rank=rank, num_replicas=world_size, shuffle=True)
-    sampler2 = DistributedSampler(val_dataset, rank=rank, num_replicas=world_size)
+    optimizer = optim.AdamW(
+        [p for p in ddp_model.parameters() if p.requires_grad],
+        lr=train_config.learning_rate,
+    )
 
-    setup()
+    # Cosine scheduler over steps; T_0 here is warmup / first cycle length
+    scheduler = CosineAnnealingWarmRestarts(
+        optimizer,
+        T_0=train_config.num_warmup_steps,
+    )
 
-    optimizer = optim.AdamW(model.parameters(), lr=train_config.learning_rate)
-    scheduler = CosineAnnealingWarmRestarts(optimizer, T_0=train_config.num_warmup_steps)
+    # Distributed samplers
+    train_sampler = DistributedSampler(
+        train_dataset,
+        num_replicas=world_size,
+        rank=rank,
+        shuffle=True,
+        drop_last=False,
+    )
+    val_sampler = DistributedSampler(
+        val_dataset,
+        num_replicas=world_size,
+        rank=rank,
+        shuffle=False,
+        drop_last=False,
+    )
 
-    fsdp_loss = torch.zeros(2).to(local_rank)
-    train_kwargs = {"batch_size": train_config.batch_size, "sampler": sampler1}
-    test_kwargs = {"batch_size": train_config.test_batch_size, "sampler": sampler2}
-    cuda_kwargs = {"num_workers": 2, "pin_memory": True, "shuffle": False}
-    train_kwargs.update(cuda_kwargs)
-    test_kwargs.update(cuda_kwargs)
+    common_loader_kwargs = {
+        "num_workers": 2,
+        "pin_memory": True,
+    }
 
-    train_loader = DataLoader(train_dataset, **train_kwargs)
-    val_loader = DataLoader(val_dataset, **test_kwargs)
-    if rank == 0:
-        inner_pbar = tqdm.tqdm(range(len(train_loader)), colour="blue", desc="r0 Training Epoch")
-    best_val_loss = float("inf")
-    curr_val_loss = float("inf")
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=train_config.batch_size,
+        sampler=train_sampler,
+        shuffle=False,
+        **common_loader_kwargs,
+    )
 
-    if rank == 0:
-        time_of_run = get_date_of_run()
-        dur = []
-        train_acc_tracking = []
-        val_acc_tracking = []
-        training_start_time = time.time()
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=train_config.test_batch_size,
+        sampler=val_sampler,
+        shuffle=False,
+        **common_loader_kwargs,
+    )
 
-    if rank == 0:
-        mem_alloc_tracker = []
-        mem_reserved_tracker = []
+    global_step: int = 0
+    running_loss: float = 0.0
+    total_tokens: int = 0
 
-    for epoch in range(1, train_config.epochs + 1):
-        t0 = time.time()
-        train_accuracy = train(model, rank, train_loader, optimizer, epoch, sampler=sampler1)
-        curr_val_loss = validation(model, rank, val_loader)
-        scheduler.step()
+    for epoch in range(train_config.epochs):
+        ddp_model.train()
+        train_sampler.set_epoch(epoch)  # important for proper shuffling each epoch
+
+        for step, batch in enumerate(train_loader):
+            optimizer.zero_grad()
+
+            model_inputs, labels = _unpack_batch(batch, device)
+            if "labels" not in model_inputs:
+                model_inputs["labels"] = labels
+
+            # this is actually counting batches, not tokens — up to you
+            total_tokens += model_inputs["input_ids"].size(0)
+
+            with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                # IMPORTANT: use ddp_model, not bare model
+                outputs = ddp_model(**model_inputs)
+
+            if hasattr(outputs, "loss") and outputs.loss is not None:
+                loss = outputs.loss
+            else:
+                loss = _manual_shifted_ce_loss(outputs[0], labels)
+
+            loss.backward()
+            optimizer.step()
+            scheduler.step()
+
+            running_loss += loss.item()
+            global_step += 1
+
+            # Log only on rank 0 to avoid spam
+            if (step + 1) % train_config.log_every == 0 and rank == 0:
+                avg_loss = running_loss / train_config.log_every
+                logger.info(f"[Train] Epoch {epoch} | Step {global_step} | Loss: {avg_loss:.4f}")
+                running_loss = 0.0
+
+        # ===== Validation after each epoch =====
+        ddp_model.eval()
+        val_loss_sum = 0.0
+        val_steps = 0
+
+        with torch.no_grad():
+            for batch in val_loader:
+                model_inputs, labels = _unpack_batch(batch, device)
+                if "labels" not in model_inputs:
+                    model_inputs["labels"] = labels
+
+                with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                    outputs = ddp_model(**model_inputs)
+
+                if hasattr(outputs, "loss") and outputs.loss is not None:
+                    loss = outputs.loss
+                else:
+                    loss = _manual_shifted_ce_loss(outputs[0], labels)
+
+                val_loss_sum += loss.item()
+                val_steps += 1
+
+        # Reduce val loss across all ranks so rank0 can report global mean
+        loss_tensor = torch.tensor(
+            [val_loss_sum, val_steps],
+            dtype=torch.float64,
+            device=device,
+        )
+        dist.all_reduce(loss_tensor, op=dist.ReduceOp.SUM)
+        global_val_loss = (loss_tensor[0] / loss_tensor[1]).item()
 
         if rank == 0:
+            logger.info(f"[Val] Epoch {epoch} | Val Loss: {global_val_loss:.4f}")
+            logger.info(f"Completed epoch {epoch}")
 
-            print(f"--> epoch {epoch} completed...entering save and stats zone")
+            last_ckpt_path = os.path.join(train_config.save_dir, f"checkpoint-epoch{epoch}.pt")
+            torch.save(
+                {
+                    "epoch": epoch,
+                    "global_step": global_step,
+                    "val_loss": global_val_loss,
+                    "model_state_dict": ddp_model.module.state_dict(),
+                    "optimizer_state_dict": optimizer.state_dict(),
+                    "scheduler_state_dict": scheduler.state_dict(),
+                    "train_config": getattr(train_config, "__dict__", None),
+                },
+                last_ckpt_path,
+            )
 
-            dur.append(time.time() - t0)
-            train_acc_tracking.append(train_accuracy.item())
-
-            val_acc_tracking.append(curr_val_loss.item())
-
-            mem_alloc_tracker.append(format_metrics_to_gb(torch.cuda.memory_allocated()))
-            mem_reserved_tracker.append(format_metrics_to_gb(torch.cuda.memory_reserved()))
-            print(f"completed save and stats zone...")
-
-        if curr_val_loss < best_val_loss:
-
-            # save
-            if rank == 0:
-                print(f"--> entering save model state")
-
-            save_policy = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
-            with FSDP.state_dict_type(model, StateDictType.FULL_STATE_DICT, save_policy):
-                cpu_state = model.state_dict()
-            # print(f"saving process: rank {rank}  done w state_dict")
-
-            if rank == 0:
-                print(f"--> saving model ...")
-                currEpoch = "-" + str(epoch) + "-" + str(round(curr_val_loss.item(), 4)) + ".pt"
-                print(f"--> attempting to save model prefix {currEpoch}")
-                save_name = f"{train_config.save_path}" + "-" + time_of_run + "-" + currEpoch
-                print(f"--> saving as model name {save_name}")
-
-                torch.save(cpu_state, save_name)
-
-        if curr_val_loss < best_val_loss:
-
-            best_val_loss = curr_val_loss
-            if rank == 0:
-                print(f"-->>>> New Val Loss Record: {best_val_loss}")
-
+    # Optional: barrier and cleanup()
     dist.barrier()
-    cleanup()
 
 
-def run_main_olmoe(config_path: str, save_path: str) -> None:
+def run_main_olmoe(config_path: str, model_name: str = "allenai/OLMoE-1B-7B-0125-Instruct") -> None:
     train_config, interventions_config_, _ = read_config.load_all_configs(config_path)
 
     custom_model = modeling_olmoe.OlmoeForCausalLM(
         configuration_olmoe.OlmoeInterventionsConfig(interventios_config=interventions_config_)
     )
 
-    # 2) Load HF weights into the overlapping parts, skipping interventions
     report = load_weights.load_hf_into_custom_model(
-        hf_model_name_or_path="allenai/OLMoE-1B-7B-0125-Instruct",
+        hf_model_name_or_path=model_name,
         custom_model=custom_model,
         intervention_patterns=["*.pre_moe_intervention.*", "*.after_moe_intervention.*"],
         map_dtype=torch.bfloat16,  # optional casting
@@ -390,8 +325,10 @@ def run_main_olmoe(config_path: str, save_path: str) -> None:
     print(f"Trainable parameters: {trainable_params}")
 
     logger.info(f"Parameter stats — total: {total_params}, trainable: {trainable_params}")
-    dataloader, _ = tiny_sft.build_tiny_sft_dataloader(model_name="allenai/OLMoE-1B-7B-0125-Instruct")
-    train_sft(model=custom_model, dataloader=dataloader, train_config=train_config, save_path=save_path)
+    dataloader, _, dataset = tiny_sft.build_tiny_sft_dataloader(model_name=model_name)
+    # train_sft(model=custom_model, dataloader=dataloader, train_config=train_config)
+    # train_sft_fsdp(model=custom_model, train_dataset=dataset, val_dataset=dataset, train_config=train_config)
+    train_sft_ddp(model=custom_model, train_dataset=dataset, val_dataset=dataset, train_config=train_config)
 
 
 if __name__ == "__main__":

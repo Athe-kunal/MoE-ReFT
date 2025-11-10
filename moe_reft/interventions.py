@@ -16,12 +16,17 @@ class LowRankRotateLayer(torch.nn.Module):
     def __init__(self, n, m, init_orth=True):
         super().__init__()
         # n > m
-        self.weight = torch.nn.Parameter(torch.empty(n, m), requires_grad=True)
+        self.weight = torch.nn.Parameter(torch.empty(n, m, dtype=torch.float32), requires_grad=True)
         if init_orth:
             torch.nn.init.orthogonal_(self.weight)
 
     def forward(self, x):
-        return torch.matmul(x.to(self.weight.dtype), self.weight)
+        # return torch.matmul(x.to(self.weight.dtype), self.weight)
+        # Errors: RuntimeError: torch.linalg.householder_product: tau dtype Float does not match input dtype BFloat16
+        # "orgqr_cuda" not implemented for 'BFloat16'
+        with torch.autocast(device_type="cuda", dtype=torch.float32):
+            out = torch.matmul(x, self.weight).to(x.dtype)
+        return out.to(x.dtype)
 
 
 class LoreftIntervention(SourcelessIntervention, TrainableIntervention, DistributedRepresentationIntervention):
@@ -34,7 +39,7 @@ class LoreftIntervention(SourcelessIntervention, TrainableIntervention, Distribu
         rotate_layer = LowRankRotateLayer(self.embed_dim, kwargs["low_rank_dimension"], init_orth=True)
         self.rotate_layer = torch.nn.utils.parametrizations.orthogonal(rotate_layer)
         self.learned_source = torch.nn.Linear(self.embed_dim, kwargs["low_rank_dimension"]).to(
-            kwargs["dtype"] if "dtype" in kwargs else torch.bfloat16
+            kwargs["dtype"] if "dtype" in kwargs else torch.float32
         )
         self.dropout = torch.nn.Dropout(kwargs["dropout"] if "dropout" in kwargs else 0.0)
         self.act_fn = (
@@ -87,9 +92,9 @@ class NoreftIntervention(SourcelessIntervention, TrainableIntervention, Distribu
         super().__init__(**kwargs, keep_last_dim=True)
         self.proj_layer = torch.nn.Linear(
             self.embed_dim, kwargs["low_rank_dimension"], bias=kwargs["add_bias"]
-        ).to(kwargs["dtype"] if "dtype" in kwargs else torch.bfloat16)
+        ).to(kwargs["dtype"] if "dtype" in kwargs else torch.float32)
         self.learned_source = torch.nn.Linear(self.embed_dim, kwargs["low_rank_dimension"]).to(
-            kwargs["dtype"] if "dtype" in kwargs else torch.bfloat16
+            kwargs["dtype"] if "dtype" in kwargs else torch.float32
         )
         self.dropout = torch.nn.Dropout(kwargs["dropout"] if "dropout" in kwargs else 0.0)
         self.act_fn = (
@@ -146,7 +151,7 @@ class DireftIntervention(SourcelessIntervention, TrainableIntervention, Distribu
         rotate_layer = LowRankRotateLayer(self.embed_dim, kwargs["low_rank_dimension"], init_orth=True)
         self.rotate_layer = torch.nn.utils.parametrizations.orthogonal(rotate_layer)
         self.learned_source = torch.nn.Linear(self.embed_dim, kwargs["low_rank_dimension"]).to(
-            kwargs["dtype"] if "dtype" in kwargs else torch.bfloat16
+            kwargs["dtype"] if "dtype" in kwargs else torch.float32
         )
         self.dropout = torch.nn.Dropout(kwargs["dropout"] if "dropout" in kwargs else 0.0)
         self.act_fn = (
@@ -171,9 +176,9 @@ class NodireftIntervention(SourcelessIntervention, TrainableIntervention, Distri
         super().__init__(**kwargs, keep_last_dim=True)
         self.proj_layer = torch.nn.Linear(
             self.embed_dim, kwargs["low_rank_dimension"], bias=kwargs["add_bias"]
-        ).to(kwargs["dtype"] if "dtype" in kwargs else torch.bfloat16)
+        ).to(kwargs["dtype"] if "dtype" in kwargs else torch.float32)
         self.learned_source = torch.nn.Linear(self.embed_dim, kwargs["low_rank_dimension"]).to(
-            kwargs["dtype"] if "dtype" in kwargs else torch.bfloat16
+            kwargs["dtype"] if "dtype" in kwargs else torch.float32
         )
         self.dropout = torch.nn.Dropout(kwargs["dropout"] if "dropout" in kwargs else 0.0)
         self.act_fn = (

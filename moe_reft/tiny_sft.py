@@ -64,7 +64,7 @@ def build_tiny_sft_dataloader(
     batch_size: int = 2,
     max_length: int = 64,
     ignore_index: int = -100,
-) -> Tuple[DataLoader, PreTrainedTokenizerBase]:
+) -> Tuple[DataLoader, PreTrainedTokenizerBase, Dataset]:
     """
     Build a tiny DataLoader you can pass into train_sft_interventions_only.
     """
@@ -100,4 +100,4 @@ def build_tiny_sft_dataloader(
         shuffle=True,
     )
 
-    return dataloader, tokenizer
+    return dataloader, tokenizer, dataset

@@ -86,7 +86,15 @@ exclude = [
     "pretrain_data.*",
     "tmp_*",
     "inference.*",
+    "**/.venv",
+    "**/venv",
+    "**/env",
+    "**/__pycache__",
+    "**/.mypy_cache",
+    "**/.pytest_cache",
 ]
+
+
 
 [tool.black]
 line-length = 115
