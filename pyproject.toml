@@ -26,6 +26,7 @@ dependencies = [
     "pyvene>=0.1.8",
     "nnsight>=0.5.10",
     "black>=23.12.1",
+    "trl>=0.25.0",
 ]
 
 [project.optional-dependencies]

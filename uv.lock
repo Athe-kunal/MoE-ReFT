@@ -1967,6 +1967,7 @@ dependencies = [
     { name = "torch" },
     { name = "torchmetrics" },
     { name = "transformers" },
+    { name = "trl" },
     { name = "wandb" },
 ]
 
@@ -2042,6 +2043,7 @@ requires-dist = [
     { name = "torchmetrics", specifier = ">=1.8.2" },
     { name = "torchmetrics", marker = "extra == 'train'" },
     { name = "transformers" },
+    { name = "trl", specifier = ">=0.25.0" },
     { name = "twine", marker = "extra == 'dev'", specifier = ">=1.11.0" },
     { name = "wandb", specifier = ">=0.22.2" },
     { name = "wandb", marker = "extra == 'train'" },
@@ -4138,6 +4140,20 @@ dependencies = [
 wheels = [
     { url = "https://files.pythonhosted.org/packages/33/3e/a2f59384587eff6aeb7d37b6780de7fedd2214935e27520430ca9f5b7975/triton-3.0.0-1-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:5ce8520437c602fb633f1324cc3871c47bee3b67acf9756c1a66309b60e3216c", size = 209438883, upload-time = "2024-07-19T20:56:52.275Z" },
     { url = "https://files.pythonhosted.org/packages/fe/7b/7757205dee3628f75e7991021d15cd1bd0c9b044ca9affe99b50879fc0e1/triton-3.0.0-1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:34e509deb77f1c067d8640725ef00c5cbfcb2052a1a3cb6a6d343841f92624eb", size = 209464695, upload-time = "2024-07-19T20:57:22.532Z" },
+]
+
+[[package]]
+name = "trl"
+version = "0.25.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "accelerate" },
+    { name = "datasets" },
+    { name = "transformers" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/e6/6b/d73a3f8cea9750aa67c8bc5a523c5dfac8d8e9554d9857d6878e0a1bf2d8/trl-0.25.0.tar.gz", hash = "sha256:9637dc52d89c2374783dc6d8949ba724b30fc0ef22dec5c82d72b84bf94d2e08", size = 403944, upload-time = "2025-11-05T23:59:59.406Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ec/42/61e77e3d3a88fe43606ceffbf3bf2020bfeece66c75583c96bf5bbf3359b/trl-0.25.0-py3-none-any.whl", hash = "sha256:89ca23469736d8d94fdbc09bc3df691694aa841f82d96a955af858233d02ea31", size = 462827, upload-time = "2025-11-05T23:59:57.825Z" },
 ]
 
 [[package]]
