@@ -242,14 +242,10 @@ def train_sft_ddp(
             wandb_run.summary["model/total_parameters"] = total_params
             wandb_run.summary["model/trainable_parameters"] = trainable_params
 
-        logger.info(
-            f"Total parameters: {total_params:,} | Trainable parameters: {trainable_params:,}"
-        )
+        logger.info(f"Total parameters: {total_params:,} | Trainable parameters: {trainable_params:,}")
 
         if writer is not None:
-            writer.add_text(
-                "model/parameter_stats", f"total={total_params}, trainable={trainable_params}"
-            )
+            writer.add_text("model/parameter_stats", f"total={total_params}, trainable={trainable_params}")
 
     global_step: int = 0
     running_loss: float = 0.0
@@ -318,13 +314,9 @@ def train_sft_ddp(
                         if layer_logits is None:
                             continue
                         logits_cpu = layer_logits.detach().float().cpu()
-                        writer.add_histogram(
-                            f"router_logits/layer_{layer_idx}", logits_cpu, global_step
-                        )
+                        writer.add_histogram(f"router_logits/layer_{layer_idx}", logits_cpu, global_step)
                         mean_value = logits_cpu.mean().item()
-                        writer.add_scalar(
-                            f"router_logits/layer_{layer_idx}_mean", mean_value, global_step
-                        )
+                        writer.add_scalar(f"router_logits/layer_{layer_idx}_mean", mean_value, global_step)
                         log_key = f"router_logits/layer_{layer_idx}_mean"
                         router_log_items[log_key] = mean_value
                         if wandb_run is not None:
@@ -334,9 +326,7 @@ def train_sft_ddp(
                     if wandb_run is not None and router_log_items:
                         wandb_run.log(router_log_items, step=global_step)
 
-                logger.info(
-                    f"[Train] Epoch {epoch} | Step {global_step} | Loss: {avg_loss:.4f}"
-                )
+                logger.info(f"[Train] Epoch {epoch} | Step {global_step} | Loss: {avg_loss:.4f}")
 
                 running_loss = 0.0
 
@@ -417,7 +407,11 @@ def train_sft_ddp(
             wandb_run.finish()
 
 
-def run_main_olmoe(config_path: str, model_name: str = "allenai/OLMoE-1B-7B-0125-Instruct") -> None:
+def run_main_olmoe(
+    config_path: str,
+    model_name: str = "allenai/OLMoE-1B-7B-0125",
+    tokenizer_model_name: str = "allenai/OLMoE-1B-7B-0125-Instruct",
+) -> None:
     train_config, interventions_config_, _ = read_config.load_all_configs(config_path)
 
     custom_model = modeling_olmoe.OlmoeForCausalLM(
@@ -444,7 +438,7 @@ def run_main_olmoe(config_path: str, model_name: str = "allenai/OLMoE-1B-7B-0125
     print(f"Trainable parameters: {trainable_params}")
 
     logger.info(f"Parameter stats — total: {total_params}, trainable: {trainable_params}")
-    dataloader, _, dataset = tiny_sft.build_tiny_sft_dataloader(model_name=model_name)
+    dataloader, _, dataset = tiny_sft.build_tiny_sft_dataloader(model_name=tokenizer_model_name)
     # train_sft(model=custom_model, dataloader=dataloader, train_config=train_config)
     # train_sft_fsdp(model=custom_model, train_dataset=dataset, val_dataset=dataset, train_config=train_config)
     custom_model.config.output_router_logits = True
