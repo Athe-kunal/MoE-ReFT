@@ -36,7 +36,6 @@ class SFTDataset(Dataset):
         *,
         source: str,
         tokenizer_model_name: str,
-        train_on_input: bool = False,
         system_key: str | None,
         user_key: str,
         assistant_key: str,
@@ -62,7 +61,6 @@ class SFTDataset(Dataset):
             system_key=system_key,
             user_key=user_key,
             assistant_key=assistant_key,
-            train_on_input=train_on_input,
         )
         validate_data_kwargs = load_dataset_kwargs.copy()
         validate_data_kwargs.pop("split", None)
@@ -70,11 +68,11 @@ class SFTDataset(Dataset):
         self.validate_one_sample()
 
     def validate_one_sample(self) -> None:
-        sample = self._prepare_sample(self._validate_data)
-        decoded_input = self.tokenizer.decode(sample["input_ids"].tolist()[0], skip_special_tokens=False)
+        sample = self._prepare_sample(self._validate_data[0])
+        decoded_input = self.tokenizer.decode(sample["input_ids"].tolist(), skip_special_tokens=False)
         logger.info(f"Decoded Input (Full Prompt + Response)\n{decoded_input}")
 
-        label_ids = [l for l in sample["labels"].tolist()[0] if l != CROSS_ENTROPY_IGNORE_INDEX]
+        label_ids = [l for l in sample["labels"].tolist() if l != CROSS_ENTROPY_IGNORE_INDEX]
         decoded_labels = self.tokenizer.decode(label_ids, skip_special_tokens=False)
         logger.info(f"Decoded Labels (Assistant Response Only)\n{decoded_labels}")
 
@@ -128,7 +126,6 @@ class SFTTransform(Transform):
         system_key: str | None,
         user_key: str,
         assistant_key: str,
-        train_on_input: bool,
         system_message: str | None,
         max_seq_len: int = 4096,
     ):
@@ -143,37 +140,30 @@ class SFTTransform(Transform):
         self.assistant_key = assistant_key
         self.response_template = response_template
         self.response_template_ids = self.tokenizer.encode(self.response_template, return_tensors="pt").squeeze(0)
-        self.train_on_input = train_on_input
         self.max_seq_len = max_seq_len
 
     def __call__(self, sample: Mapping[str, Any]) -> dict[str, Any]:
-        user_messages = sample[self.user_key]
+        user_message = sample[self.user_key]
         if self.system_message:
-            system_messages = [self.system_message] * len(user_messages)
+            system_message = self.system_message
         else:
-            system_messages = sample[self.system_key]
-        assistant_messages = sample[self.assistant_key]
+            system_message = sample[self.system_key]
+        assistant_message = sample[self.assistant_key]
 
-        assert system_messages
-        assert user_messages
-        assert assistant_messages
+        assert system_message
+        assert user_message
+        assert assistant_message
 
         messages = [
-            [
-                {"role": "system", "content": system_message},
-                {"role": "user", "content": user_message},
-                {"role": "assistant", "content": assistant_mesage},
-            ]
-            for system_message, user_message, assistant_mesage in zip(
-                system_messages, user_messages, assistant_messages, strict=True
-            )
+            {"role": "system", "content": system_message},
+            {"role": "user", "content": user_message},
+            {"role": "assistant", "content": assistant_message},
         ]
         tokenized_dict = self.tokenizer.apply_chat_template(
             messages,
             tokenize=True,
             add_generation_prompt=False,
             return_dict=True,
-            padding=True,
             truncation=True,
             max_seq_len=self.max_seq_len,
             return_tensors="pt",
@@ -187,9 +177,9 @@ class SFTTransform(Transform):
         labels = torch.where(label_ids[None, :] >= idx_after[:, None], input_ids, CROSS_ENTROPY_IGNORE_INDEX)
 
         return {
-            "input_ids": input_ids,
-            "attention_mask": attention_mask,
-            "labels": labels,
+            "input_ids": input_ids[0],
+            "attention_mask": attention_mask[0],
+            "labels": labels[0],
         }
 
 
@@ -202,7 +192,6 @@ if __name__ == "__main__":
         system_message="You are a helpful math tutor. Solve step by step.",
         user_key="question",
         assistant_key="answer",
-        train_on_input=False,
         split="train",
         name="main",
     )
