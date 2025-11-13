@@ -27,6 +27,7 @@ dependencies = [
     "nnsight>=0.5.10",
     "black>=23.12.1",
     "trl>=0.25.0",
+    "ipykernel>=7.1.0",
 ]
 
 [project.optional-dependencies]
@@ -175,6 +176,4 @@ filterwarnings = [
 ]
 
 [dependency-groups]
-dev = [
-    "ipykernel>=7.0.1",
-]
+dev = []
