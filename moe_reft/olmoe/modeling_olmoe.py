@@ -587,7 +587,7 @@ class OlmoeSparseMoeBlock(nn.Module):
         top_k_weights = top_k_weights.to(hidden_states.dtype)
         return top_k_index, top_k_weights
 
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+    def forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         batch_size, sequence_length, hidden_dim = hidden_states.shape
         hidden_states = hidden_states.view(-1, hidden_dim)
         router_logits = self.gate(hidden_states)
@@ -595,7 +595,7 @@ class OlmoeSparseMoeBlock(nn.Module):
         final_hidden_states = self.experts(hidden_states, top_k_index, top_k_weights).reshape(
             batch_size, sequence_length, hidden_dim
         )
-        return final_hidden_states
+        return final_hidden_states, router_logits
 
 
 def build_intervention(
@@ -711,7 +711,7 @@ class OlmoeDecoderLayer(GradientCheckpointingLayer):
         # Fully Connected
         residual = hidden_states
         hidden_states = self.post_attention_layernorm(hidden_states)
-        hidden_states, router_logits = self.mlp(hidden_states)
+        hidden_states, router_logits = self.mlp.forward(hidden_states)
         hidden_states = residual + hidden_states
 
         hidden_states = self.after_moe_intervention.forward(hidden_states)

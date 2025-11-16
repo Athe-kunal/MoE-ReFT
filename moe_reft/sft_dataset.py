@@ -3,6 +3,7 @@ from typing import Any, Callable, Mapping, Optional, Protocol, Mapping, cast, Li
 from loguru import logger
 from datasets import load_dataset
 import torch
+import dataclasses
 from torch.utils.data import Dataset
 from transformers import (
     AutoTokenizer,
@@ -28,6 +29,56 @@ def extract_response_template(tokenizer: PreTrainedTokenizerBase) -> str | None:
 
 class Transform(Protocol):
     def __call__(self, sample: Mapping[str, Any]) -> Mapping[str, Any]: ...
+
+
+# Whatever you already use in SFTTransform
+CROSS_ENTROPY_IGNORE_INDEX = -100  # or import from your constants
+
+
+@dataclasses.dataclass
+class SFTDataCollator:
+    tokenizer: PreTrainedTokenizerBase
+    label_pad_token_id: int = CROSS_ENTROPY_IGNORE_INDEX
+    pad_to_multiple_of: int | None = None
+
+    def __call__(self, features: list[dict[str, Any]]) -> dict[str, torch.Tensor]:
+        # 1. Separate labels so tokenizer.pad only sees model inputs
+        labels_list: list[Any] = [f["labels"] for f in features]
+        features_for_pad: list[dict[str, Any]] = [{k: v for k, v in f.items() if k != "labels"} for f in features]
+
+        # 2. Let tokenizer.pad handle input_ids / attention_mask
+        batch = self.tokenizer.pad(
+            features_for_pad,
+            padding=True,  # pad to max length in this batch
+            max_length=None,  # or a fixed max_length if you want
+            pad_to_multiple_of=self.pad_to_multiple_of,
+            return_tensors="pt",
+        )
+
+        # 3. Manually pad labels to match seq_len of input_ids
+        seq_len: int = batch["input_ids"].size(1)
+        padded_labels: list[list[int]] = []
+
+        for lbl in labels_list:
+            # convert to python list of ints
+            if isinstance(lbl, torch.Tensor):
+                lbl_list = lbl.tolist()
+            else:
+                lbl_list = list(lbl)
+
+            # truncate if somehow longer than seq_len
+            if len(lbl_list) > seq_len:
+                lbl_list = lbl_list[:seq_len]
+
+            pad_len = seq_len - len(lbl_list)
+            if pad_len > 0:
+                lbl_list = lbl_list + [self.label_pad_token_id] * pad_len
+
+            padded_labels.append(lbl_list)
+
+        batch["labels"] = torch.tensor(padded_labels, dtype=torch.long)
+
+        return batch
 
 
 class SFTDataset(Dataset):
@@ -174,7 +225,7 @@ class SFTTransform(Transform):
 
         idx_after = find_after_subseq_batched(input_ids, self.response_template_ids)
         label_ids = torch.arange(0, input_ids.shape[1])
-        labels = torch.where(label_ids[None, :] >= idx_after[:, None], input_ids, CROSS_ENTROPY_IGNORE_INDEX)
+        labels = torch.where(label_ids[None, :] > idx_after[:, None], input_ids, CROSS_ENTROPY_IGNORE_INDEX)
 
         return {
             "input_ids": input_ids[0],

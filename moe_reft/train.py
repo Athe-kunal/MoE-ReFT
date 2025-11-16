@@ -24,6 +24,7 @@ from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 
 from moe_reft import interventions_config, tiny_sft, read_config, datamodels
 from moe_reft.olmoe import modeling_olmoe, configuration_olmoe, load_weights
+from moe_reft import sft_dataset
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
@@ -32,22 +33,23 @@ def _unpack_batch(
     batch: Any,
     device: torch.device,
 ) -> tuple[dict[str, torch.Tensor], torch.Tensor]:
-    if isinstance(batch, dict):
-        labels = batch["labels"].to(device)
-        model_inputs = {k: v.to(device) for k, v in batch.items() if k != "labels"}
-        return model_inputs, labels
+    # if isinstance(batch, dict):
+    labels = batch["labels"].to(device)
+    model_inputs = {k: v.to(device) for k, v in batch.items() if k != "labels"}
+    return model_inputs, labels
 
-    if isinstance(batch, (list, tuple)):
-        if len(batch) == 2:
-            x, y = batch
-            return {"input_ids": x.to(device)}, y.to(device)
-        if len(batch) == 3:
-            x, attn, y = batch
-            return {"input_ids": x.to(device), "attention_mask": attn.to(device)}, y.to(device)
+    # if isinstance(batch, (list, tuple)):
+    #     if len(batch) == 2:
+    #         x, y = batch
+    #         return {"input_ids": x.to(device)}, y.to(device)
+    #     if len(batch) == 3:
+    #         x, attn, y = batch
+    #         return {"input_ids": x.to(device), "attention_mask": attn.to(device)}, y.to(device)
 
-    # Fallback: assume (X, Y)
-    x, y = batch
-    return {"input_ids": x.to(device)}, y.to(device)
+    # # Fallback: assume (X, Y)
+    # print(batch)
+    # x, y = batch
+    # return {"input_ids": x.to(device)}, y.to(device)
 
 
 def _manual_shifted_ce_loss(
@@ -87,7 +89,6 @@ def train_sft(model: nn.Module, dataloader: DataLoader, train_config: datamodels
     model.train()
 
     optimizer = build_optimizer_from_requires_grad(model=model, lr=train_config.learning_rate)
-    num_training_steps = (len(dataloader) // train_config.grad_accum_steps) * train_config.epochs
     scheduler = CosineAnnealingWarmRestarts(optimizer, T_0=train_config.num_warmup_steps)
 
     global_step: int = 0
@@ -137,8 +138,8 @@ def cleanup():
 
 def train_sft_ddp(
     model: nn.Module,
-    train_dataset: Dataset,
-    val_dataset: Dataset,
+    train_dataset: sft_dataset.SFTDataset,
+    val_dataset: sft_dataset.SFTDataset,
     train_config: datamodels.TrainConfig,
 ) -> None:
     # Assume setup() does dist.init_process_group(...)
@@ -194,21 +195,23 @@ def train_sft_ddp(
     )
 
     common_loader_kwargs = {
-        "num_workers": 2,
+        "num_workers": 16,
         "pin_memory": True,
     }
-
+    collate_fn = sft_dataset.SFTDataCollator(train_dataset.tokenizer)
     train_loader = DataLoader(
         train_dataset,
         batch_size=train_config.batch_size,
         sampler=train_sampler,
         shuffle=False,
+        collate_fn=collate_fn,
         **common_loader_kwargs,
     )
 
     val_loader = DataLoader(
         val_dataset,
         batch_size=train_config.test_batch_size,
+        collate_fn=collate_fn,
         sampler=val_sampler,
         shuffle=False,
         **common_loader_kwargs,
@@ -270,7 +273,7 @@ def train_sft_ddp(
                 # IMPORTANT: use ddp_model, not bare model
                 outputs = ddp_model(**model_inputs)
 
-            router_logits = getattr(outputs, "router_logits", None)
+            # router_logits = getattr(outputs, "router_logits", None)
 
             if hasattr(outputs, "loss") and outputs.loss is not None:
                 loss = outputs.loss
@@ -308,23 +311,23 @@ def train_sft_ddp(
                     if lr is not None:
                         writer.add_scalar("train/learning_rate", lr, global_step)
 
-                if router_logits is not None and writer is not None:
-                    router_log_items: dict[str, Any] = {}
-                    for layer_idx, layer_logits in enumerate(router_logits):
-                        if layer_logits is None:
-                            continue
-                        logits_cpu = layer_logits.detach().float().cpu()
-                        writer.add_histogram(f"router_logits/layer_{layer_idx}", logits_cpu, global_step)
-                        mean_value = logits_cpu.mean().item()
-                        writer.add_scalar(f"router_logits/layer_{layer_idx}_mean", mean_value, global_step)
-                        log_key = f"router_logits/layer_{layer_idx}_mean"
-                        router_log_items[log_key] = mean_value
-                        if wandb_run is not None:
-                            router_log_items[f"router_logits/layer_{layer_idx}_hist"] = wandb.Histogram(
-                                logits_cpu.view(-1).numpy()
-                            )
-                    if wandb_run is not None and router_log_items:
-                        wandb_run.log(router_log_items, step=global_step)
+                    # if router_logits is not None and writer is not None:
+                    #     router_log_items: dict[str, Any] = {}
+                    #     for layer_idx, layer_logits in enumerate(router_logits):
+                    #         if layer_logits is None:
+                    #             continue
+                    #         logits_cpu = layer_logits.detach().float().cpu()
+                    #         writer.add_histogram(f"router_logits/layer_{layer_idx}", logits_cpu, global_step)
+                    #         mean_value = logits_cpu.mean().item()
+                    #         writer.add_scalar(f"router_logits/layer_{layer_idx}_mean", mean_value, global_step)
+                    #         log_key = f"router_logits/layer_{layer_idx}_mean"
+                    #         router_log_items[log_key] = mean_value
+                    #         if wandb_run is not None:
+                    #             router_log_items[f"router_logits/layer_{layer_idx}_hist"] = wandb.Histogram(
+                    #                 logits_cpu.view(-1).numpy()
+                    #             )
+                    # if wandb_run is not None and router_log_items:
+                    #     wandb_run.log(router_log_items, step=global_step)
 
                 logger.info(f"[Train] Epoch {epoch} | Step {global_step} | Loss: {avg_loss:.4f}")
 
@@ -438,12 +441,33 @@ def run_main_olmoe(
     print(f"Trainable parameters: {trainable_params}")
 
     logger.info(f"Parameter stats — total: {total_params}, trainable: {trainable_params}")
-    dataloader, _, dataset = tiny_sft.build_tiny_sft_dataloader(model_name=tokenizer_model_name)
+    # dataloader, _, dataset = tiny_sft.build_tiny_sft_dataloader(model_name=tokenizer_model_name)
     # train_sft(model=custom_model, dataloader=dataloader, train_config=train_config)
     # train_sft_fsdp(model=custom_model, train_dataset=dataset, val_dataset=dataset, train_config=train_config)
-    custom_model.config.output_router_logits = True
-
-    train_sft_ddp(model=custom_model, train_dataset=dataset, val_dataset=dataset, train_config=train_config)
+    # custom_model.config.output_router_logits = True
+    train_dataset = sft_dataset.SFTDataset(
+        source="openai/gsm8k",
+        tokenizer_model_name=tokenizer_model_name,
+        system_key=None,
+        system_message="You are a helpful math tutor. Solve step by step.",
+        user_key="question",
+        assistant_key="answer",
+        split="train",
+        name="main",
+    )
+    val_dataset = sft_dataset.SFTDataset(
+        source="openai/gsm8k",
+        tokenizer_model_name=tokenizer_model_name,
+        system_key=None,
+        system_message="You are a helpful math tutor. Solve step by step.",
+        user_key="question",
+        assistant_key="answer",
+        split="test",
+        name="main",
+    )
+    train_sft_ddp(
+        model=custom_model, train_dataset=train_dataset, val_dataset=val_dataset, train_config=train_config
+    )
 
 
 if __name__ == "__main__":
