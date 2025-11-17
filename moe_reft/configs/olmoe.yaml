@@ -2,7 +2,7 @@ train:
   save_dir: "dry_run/"
   epochs: 1
   learning_rate: 5.0e-5
-  grad_accum_steps: 1
+  grad_accum_steps: 2
   max_grad_norm: 1.0
   amp: true
   amp_dtype: "bfloat16" # mapped to torch.bfloat16 in code
@@ -10,7 +10,7 @@ train:
   ignore_index: -100
   num_warmup_steps: 1
   device: null # e.g. "cuda", "cuda:0", or null for auto
-  batch_size: 32
+  batch_size: 8
   test_batch_size: 64
 
 interventions:

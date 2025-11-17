@@ -1,5 +1,5 @@
 import re
-from typing import Any, Callable, Mapping, Optional, Protocol, Mapping, cast, Literal
+from typing import Any, Callable, Mapping, Optional, Protocol, Mapping, cast
 from loguru import logger
 from datasets import load_dataset
 import torch
@@ -86,7 +86,7 @@ class SFTDataset(Dataset):
         self,
         *,
         source: str,
-        tokenizer_model_name: str,
+        tokenizer: PreTrainedTokenizerBase,
         system_key: str | None,
         user_key: str,
         assistant_key: str,
@@ -95,10 +95,10 @@ class SFTDataset(Dataset):
         filter_kwargs: Optional[dict[str, Any]] = None,
         **load_dataset_kwargs: dict[str, Any],
     ) -> None:
-        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_model_name)
+        self.tokenizer = tokenizer
         self.response_template = extract_response_template(self.tokenizer)
         logger.info(
-            f"For the {tokenizer_model_name=} automatically assigned the response template to {self.response_template}"
+            f"For the {tokenizer.name_or_path=} automatically assigned the response template to {self.response_template}"
         )
         self._data = load_dataset(source, **load_dataset_kwargs)
         if filter_fn is not None:
@@ -236,9 +236,10 @@ class SFTTransform(Transform):
 
 if __name__ == "__main__":
     tokenizer_model = "allenai/OLMoE-1B-7B-0125-Instruct"
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_model)
     ds = SFTDataset(
         source="openai/gsm8k",
-        tokenizer_model_name=tokenizer_model,
+        tokenizer=tokenizer,
         system_key=None,
         system_message="You are a helpful math tutor. Solve step by step.",
         user_key="question",

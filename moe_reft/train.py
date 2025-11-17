@@ -14,17 +14,17 @@ from loguru import logger
 import torch.distributed as dist
 import torch.optim as optim
 from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.profiler import profile, ProfilerActivity, record_function
 
 import wandb
-
+from transformers import AutoTokenizer
 from torch.utils.data import Dataset
 from torch.utils.data.distributed import DistributedSampler
 
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 
-from moe_reft import interventions_config, tiny_sft, read_config, datamodels
+from moe_reft import interventions_config, tiny_sft, read_config, datamodels, sft_dataset
 from moe_reft.olmoe import modeling_olmoe, configuration_olmoe, load_weights
-from moe_reft import sft_dataset
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
@@ -33,23 +33,9 @@ def _unpack_batch(
     batch: Any,
     device: torch.device,
 ) -> tuple[dict[str, torch.Tensor], torch.Tensor]:
-    # if isinstance(batch, dict):
     labels = batch["labels"].to(device)
     model_inputs = {k: v.to(device) for k, v in batch.items() if k != "labels"}
     return model_inputs, labels
-
-    # if isinstance(batch, (list, tuple)):
-    #     if len(batch) == 2:
-    #         x, y = batch
-    #         return {"input_ids": x.to(device)}, y.to(device)
-    #     if len(batch) == 3:
-    #         x, attn, y = batch
-    #         return {"input_ids": x.to(device), "attention_mask": attn.to(device)}, y.to(device)
-
-    # # Fallback: assume (X, Y)
-    # print(batch)
-    # x, y = batch
-    # return {"input_ids": x.to(device)}, y.to(device)
 
 
 def _manual_shifted_ce_loss(
@@ -95,35 +81,40 @@ def train_sft(model: nn.Module, dataloader: DataLoader, train_config: datamodels
     running_loss: float = 0.0
     total_tokens: int = 0
 
-    for epoch in range(train_config.epochs):
-        for step, batch in enumerate(dataloader):
-            model_inputs, labels = _unpack_batch(batch, device)
-            if "labels" not in model_inputs:
-                model_inputs["labels"] = labels
-            total_tokens += model_inputs["input_ids"].size(0)
-            with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                outputs = model(**model_inputs)
+    with profile(
+        activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], profile_memory=True, record_shapes=True
+    ) as prof:
+        for epoch in range(train_config.epochs):
+            for step, batch in enumerate(dataloader):
+                optimizer.zero_grad(set_to_none=True)
 
-            if hasattr(outputs, "loss") and outputs.loss is not None:
-                loss = outputs.loss
-            else:
-                loss = _manual_shifted_ce_loss(outputs[0], labels)
+                model_inputs, labels = _unpack_batch(batch, device)
+                if "labels" not in model_inputs:
+                    model_inputs["labels"] = labels
+                total_tokens += model_inputs["input_ids"].size(0)
+                with record_function("forward_pass"):
+                    with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                        outputs = model(**model_inputs)
+                with record_function("backward_pass"):
 
-            loss.backward()
+                    if hasattr(outputs, "loss") and outputs.loss is not None:
+                        loss = outputs.loss
+                        loss.backward()
+                    else:
+                        loss = _manual_shifted_ce_loss(outputs[0], labels)
+                        loss.backward()
 
-            running_loss += loss.item()
+                    running_loss += loss.item()
 
-            optimizer.step()
-            scheduler.step()
-
-            global_step += 1
-
-            if step % train_config.log_every == 0:
-                avg_loss = running_loss / train_config.log_every
-                logger.info(f"Epoch {epoch} | Step {global_step} | Loss: {avg_loss:.4f}")
-                running_loss = 0.0
-            optimizer.zero_grad()
-        logger.info(f"Completed for epoch {epoch}")
+                    optimizer.step()
+                    scheduler.step()
+                global_step += 1
+                if step % train_config.log_every == 0:
+                    avg_loss = running_loss / train_config.log_every
+                    logger.info(f"Epoch {epoch} | Step {global_step} | Loss: {avg_loss:.4f}")
+                    running_loss = 0.0
+            logger.info(f"Completed for epoch {epoch}")
+    prof.export_chrome_trace("trace.json")
     torch.save(model, train_config.save_dir + "model.pt")
 
 
@@ -142,7 +133,6 @@ def train_sft_ddp(
     val_dataset: sft_dataset.SFTDataset,
     train_config: datamodels.TrainConfig,
 ) -> None:
-    # Assume setup() does dist.init_process_group(...)
     setup()
 
     local_rank = int(os.environ["LOCAL_RANK"])
@@ -183,7 +173,7 @@ def train_sft_ddp(
         train_dataset,
         num_replicas=world_size,
         rank=rank,
-        shuffle=True,
+        shuffle=False,
         drop_last=False,
     )
     val_sampler = DistributedSampler(
@@ -262,7 +252,7 @@ def train_sft_ddp(
         for step, batch in enumerate(train_loader):
             optimizer.zero_grad()
 
-            model_inputs, labels = _unpack_batch(batch, device)
+            model_inputs, labels = _unpack_batch(batch, device=device)
             if "labels" not in model_inputs:
                 model_inputs["labels"] = labels
 
@@ -270,66 +260,69 @@ def train_sft_ddp(
             total_tokens += model_inputs["input_ids"].size(0)
 
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                # IMPORTANT: use ddp_model, not bare model
                 outputs = ddp_model(**model_inputs)
 
-            # router_logits = getattr(outputs, "router_logits", None)
+            router_logits = getattr(outputs, "router_logits", None)
 
             if hasattr(outputs, "loss") and outputs.loss is not None:
                 loss = outputs.loss
+                loss = loss / train_config.grad_accum_steps
             else:
                 loss = _manual_shifted_ce_loss(outputs[0], labels)
+                loss = loss / train_config.grad_accum_steps
 
             loss.backward()
-            optimizer.step()
-            scheduler.step()
+            running_loss += float(loss.item()) * train_config.grad_accum_steps
 
-            running_loss += loss.item()
-            global_step += 1
+            if (step + 1) % train_config.grad_accum_steps == 0:
+                optimizer.step()
+                scheduler.step()
 
-            # Log only on rank 0 to avoid spam
-            if (step + 1) % train_config.log_every == 0 and rank == 0:
-                avg_loss = running_loss / train_config.log_every
-                current_time = time.time() - start_time
-                last_lr = scheduler.get_last_lr()
-                lr = last_lr[0] if last_lr else None
+                global_step += 1
 
-                log_dict: dict[str, Any] = {
-                    "train/loss": avg_loss,
-                    "train/time": current_time,
-                    "train/step": global_step,
-                }
-                if lr is not None:
-                    log_dict["train/learning_rate"] = lr
+                # Log only on rank 0 to avoid spam
+                if (step + 1) % train_config.log_every == 0 and rank == 0:
+                    avg_loss = running_loss / train_config.log_every
+                    current_time = time.time() - start_time
+                    last_lr = scheduler.get_last_lr()
+                    lr = last_lr[0] if last_lr else None
 
-                if wandb_run is not None:
-                    wandb_run.log(log_dict, step=global_step)
-
-                if writer is not None:
-                    writer.add_scalar("train/loss", avg_loss, global_step)
-                    writer.add_scalar("train/time", current_time, global_step)
+                    log_dict: dict[str, Any] = {
+                        "train/loss": avg_loss,
+                        "train/time": current_time,
+                        "train/step": global_step,
+                    }
                     if lr is not None:
-                        writer.add_scalar("train/learning_rate", lr, global_step)
+                        log_dict["train/learning_rate"] = lr
 
-                    # if router_logits is not None and writer is not None:
-                    #     router_log_items: dict[str, Any] = {}
-                    #     for layer_idx, layer_logits in enumerate(router_logits):
-                    #         if layer_logits is None:
-                    #             continue
-                    #         logits_cpu = layer_logits.detach().float().cpu()
-                    #         writer.add_histogram(f"router_logits/layer_{layer_idx}", logits_cpu, global_step)
-                    #         mean_value = logits_cpu.mean().item()
-                    #         writer.add_scalar(f"router_logits/layer_{layer_idx}_mean", mean_value, global_step)
-                    #         log_key = f"router_logits/layer_{layer_idx}_mean"
-                    #         router_log_items[log_key] = mean_value
-                    #         if wandb_run is not None:
-                    #             router_log_items[f"router_logits/layer_{layer_idx}_hist"] = wandb.Histogram(
-                    #                 logits_cpu.view(-1).numpy()
-                    #             )
-                    # if wandb_run is not None and router_log_items:
-                    #     wandb_run.log(router_log_items, step=global_step)
+                    if wandb_run is not None:
+                        wandb_run.log(log_dict, step=global_step)
 
-                logger.info(f"[Train] Epoch {epoch} | Step {global_step} | Loss: {avg_loss:.4f}")
+                    if writer is not None:
+                        writer.add_scalar("train/loss", avg_loss, global_step)
+                        writer.add_scalar("train/time", current_time, global_step)
+                        if lr is not None:
+                            writer.add_scalar("train/learning_rate", lr, global_step)
+
+                        if router_logits is not None and writer is not None:
+                            router_log_items: dict[str, Any] = {}
+                            for layer_idx, layer_logits in enumerate(router_logits):
+                                if layer_logits is None:
+                                    continue
+                                logits_cpu = layer_logits.detach().float().cpu()
+                                writer.add_histogram(f"router_logits/layer_{layer_idx}", logits_cpu, global_step)
+                                mean_value = logits_cpu.mean().item()
+                                writer.add_scalar(f"router_logits/layer_{layer_idx}_mean", mean_value, global_step)
+                                log_key = f"router_logits/layer_{layer_idx}_mean"
+                                router_log_items[log_key] = mean_value
+                                if wandb_run is not None:
+                                    router_log_items[f"router_logits/layer_{layer_idx}_hist"] = wandb.Histogram(
+                                        logits_cpu.view(-1).numpy()
+                                    )
+                        if wandb_run is not None and router_log_items:
+                            wandb_run.log(router_log_items, step=global_step)
+
+                    logger.info(f"[Train] Epoch {epoch} | Step {global_step} | Loss: {avg_loss:.4f}")
 
                 running_loss = 0.0
 
@@ -443,11 +436,10 @@ def run_main_olmoe(
     logger.info(f"Parameter stats — total: {total_params}, trainable: {trainable_params}")
     # dataloader, _, dataset = tiny_sft.build_tiny_sft_dataloader(model_name=tokenizer_model_name)
     # train_sft(model=custom_model, dataloader=dataloader, train_config=train_config)
-    # train_sft_fsdp(model=custom_model, train_dataset=dataset, val_dataset=dataset, train_config=train_config)
-    # custom_model.config.output_router_logits = True
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_model_name)
     train_dataset = sft_dataset.SFTDataset(
         source="openai/gsm8k",
-        tokenizer_model_name=tokenizer_model_name,
+        tokenizer=tokenizer,
         system_key=None,
         system_message="You are a helpful math tutor. Solve step by step.",
         user_key="question",
@@ -457,7 +449,7 @@ def run_main_olmoe(
     )
     val_dataset = sft_dataset.SFTDataset(
         source="openai/gsm8k",
-        tokenizer_model_name=tokenizer_model_name,
+        tokenizer=tokenizer,
         system_key=None,
         system_message="You are a helpful math tutor. Solve step by step.",
         user_key="question",
