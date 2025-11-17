@@ -216,7 +216,7 @@ class SFTTransform(Transform):
             add_generation_prompt=False,
             return_dict=True,
             truncation=True,
-            max_seq_len=self.max_seq_len,
+            max_length=self.max_seq_len,
             return_tensors="pt",
         )
 
