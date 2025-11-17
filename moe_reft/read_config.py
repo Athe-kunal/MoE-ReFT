@@ -60,6 +60,8 @@ def load_all_configs(
         ignore_index=int(train_section.ignore_index),
         num_warmup_steps=int(train_section.num_warmup_steps),
         device=device_obj,
+        batch_size=int(train_section.batch_size),
+        test_batch_size=int(train_section.test_batch_size),
     )
 
     # ------------------------
