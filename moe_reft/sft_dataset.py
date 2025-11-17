@@ -31,10 +31,6 @@ class Transform(Protocol):
     def __call__(self, sample: Mapping[str, Any]) -> Mapping[str, Any]: ...
 
 
-# Whatever you already use in SFTTransform
-CROSS_ENTROPY_IGNORE_INDEX = -100  # or import from your constants
-
-
 @dataclasses.dataclass
 class SFTDataCollator:
     tokenizer: PreTrainedTokenizerBase
@@ -87,6 +83,7 @@ class SFTDataset(Dataset):
         *,
         source: str,
         tokenizer: PreTrainedTokenizerBase,
+        response_template_ids: list[int],
         system_key: str | None,
         user_key: str,
         assistant_key: str,
@@ -96,7 +93,6 @@ class SFTDataset(Dataset):
         **load_dataset_kwargs: dict[str, Any],
     ) -> None:
         self.tokenizer = tokenizer
-        self.response_template = extract_response_template(self.tokenizer)
         logger.info(
             f"For the {tokenizer.name_or_path=} automatically assigned the response template to {self.response_template}"
         )
@@ -107,12 +103,13 @@ class SFTDataset(Dataset):
             self._data = self._data.filter(filter_fn, **filter_kwargs)
         self._prepare_sample = SFTTransform(
             tokenizer=self.tokenizer,
-            response_template=self.response_template,
+            response_template_ids=self.response_template_ids,
             system_message=system_message,
             system_key=system_key,
             user_key=user_key,
             assistant_key=assistant_key,
         )
+        self.response_template_ids = torch.tensor(response_template_ids)
         validate_data_kwargs = load_dataset_kwargs.copy()
         validate_data_kwargs.pop("split", None)
         self._validate_data = load_dataset(source, split="train[:1]", **validate_data_kwargs)
@@ -173,7 +170,7 @@ class SFTTransform(Transform):
     def __init__(
         self,
         tokenizer: PreTrainedTokenizerBase,
-        response_template: str,
+        response_template_ids: torch.Tensor,
         system_key: str | None,
         user_key: str,
         assistant_key: str,
@@ -189,8 +186,7 @@ class SFTTransform(Transform):
         self.system_message = system_message
         self.user_key = user_key
         self.assistant_key = assistant_key
-        self.response_template = response_template
-        self.response_template_ids = self.tokenizer.encode(self.response_template, return_tensors="pt").squeeze(0)
+        self.response_template_ids = response_template_ids
         self.max_seq_len = max_seq_len
 
     def __call__(self, sample: Mapping[str, Any]) -> dict[str, Any]:
@@ -237,9 +233,12 @@ class SFTTransform(Transform):
 if __name__ == "__main__":
     tokenizer_model = "allenai/OLMoE-1B-7B-0125-Instruct"
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_model)
+    response_template = extract_response_template(tokenizer)
+    response_template_ids = tokenizer(response_template)["input_ids"]
     ds = SFTDataset(
         source="openai/gsm8k",
         tokenizer=tokenizer,
+        response_template_ids=response_template_ids,
         system_key=None,
         system_message="You are a helpful math tutor. Solve step by step.",
         user_key="question",

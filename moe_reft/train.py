@@ -437,9 +437,12 @@ def run_main_olmoe(
     # dataloader, _, dataset = tiny_sft.build_tiny_sft_dataloader(model_name=tokenizer_model_name)
     # train_sft(model=custom_model, dataloader=dataloader, train_config=train_config)
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_model_name)
+    response_template = sft_dataset.extract_response_template(tokenizer)
+    response_template_ids = tokenizer(response_template)["input_ids"]
     train_dataset = sft_dataset.SFTDataset(
         source="openai/gsm8k",
         tokenizer=tokenizer,
+        response_template_ids=response_template_ids,
         system_key=None,
         system_message="You are a helpful math tutor. Solve step by step.",
         user_key="question",
@@ -450,6 +453,7 @@ def run_main_olmoe(
     val_dataset = sft_dataset.SFTDataset(
         source="openai/gsm8k",
         tokenizer=tokenizer,
+        response_template_ids=response_template_ids,
         system_key=None,
         system_message="You are a helpful math tutor. Solve step by step.",
         user_key="question",

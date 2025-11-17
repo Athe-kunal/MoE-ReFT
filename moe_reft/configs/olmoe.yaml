@@ -1,6 +1,6 @@
 train:
-  save_dir: "dry_run/"
-  epochs: 1
+  save_dir: "gsm8k_run/"
+  epochs: 3
   learning_rate: 5.0e-5
   grad_accum_steps: 2
   max_grad_norm: 1.0
@@ -17,7 +17,7 @@ interventions:
   intervention_type: "LoreftIntervention" # or "DireftIntervention"
   intervention_layers: "all" # "all" | "odd_only" | "even_only" | "alternate"
   intervention_places: "pre_moe" # "pre_moe" | "after_moe"
-  low_rank_dimension: 8
+  low_rank_dimension: 32
   dropout: 0.0
   act_fn: null # "gelu", "relu", or null/linear
   init_orth: true
