@@ -93,9 +93,6 @@ class SFTDataset(Dataset):
         **load_dataset_kwargs: dict[str, Any],
     ) -> None:
         self.tokenizer = tokenizer
-        logger.info(
-            f"For the {tokenizer.name_or_path=} automatically assigned the response template to {self.response_template}"
-        )
         self._data = load_dataset(source, **load_dataset_kwargs)
         if filter_fn is not None:
             if filter_kwargs is None:
@@ -234,6 +231,9 @@ if __name__ == "__main__":
     tokenizer_model = "allenai/OLMoE-1B-7B-0125-Instruct"
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_model)
     response_template = extract_response_template(tokenizer)
+    logger.info(
+        f"For the {tokenizer.name_or_path=} automatically assigned the response template to {response_template}"
+    )
     response_template_ids = tokenizer(response_template)["input_ids"]
     ds = SFTDataset(
         source="openai/gsm8k",

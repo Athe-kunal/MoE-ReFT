@@ -18,7 +18,6 @@ from torch.profiler import profile, ProfilerActivity, record_function
 
 import wandb
 from transformers import AutoTokenizer
-from torch.utils.data import Dataset
 from torch.utils.data.distributed import DistributedSampler
 
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
