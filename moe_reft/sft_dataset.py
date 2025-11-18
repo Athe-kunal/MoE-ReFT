@@ -98,6 +98,7 @@ class SFTDataset(Dataset):
             if filter_kwargs is None:
                 filter_kwargs = {}
             self._data = self._data.filter(filter_fn, **filter_kwargs)
+        self.response_template_ids = torch.tensor(response_template_ids)
         self._prepare_sample = SFTTransform(
             tokenizer=self.tokenizer,
             response_template_ids=self.response_template_ids,
@@ -106,7 +107,6 @@ class SFTDataset(Dataset):
             user_key=user_key,
             assistant_key=assistant_key,
         )
-        self.response_template_ids = torch.tensor(response_template_ids)
         validate_data_kwargs = load_dataset_kwargs.copy()
         validate_data_kwargs.pop("split", None)
         self._validate_data = load_dataset(source, split="train[:1]", **validate_data_kwargs)
