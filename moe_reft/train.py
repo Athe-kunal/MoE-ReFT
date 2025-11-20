@@ -162,10 +162,10 @@ def train_sft_ddp(
     )
 
     # Cosine scheduler over steps; T_0 here is warmup / first cycle length
-    scheduler = CosineAnnealingWarmRestarts(
-        optimizer,
-        T_0=train_config.num_warmup_steps,
-    )
+    # scheduler = CosineAnnealingWarmRestarts(
+    #     optimizer,
+    #     T_0=train_config.num_warmup_steps,
+    # )
 
     # Distributed samplers
     train_sampler = DistributedSampler(
@@ -249,7 +249,8 @@ def train_sft_ddp(
         train_sampler.set_epoch(epoch)  # important for proper shuffling each epoch
 
         for step, batch in enumerate(train_loader):
-            optimizer.zero_grad()
+            if step % train_config.grad_accum_steps == 0:
+                optimizer.zero_grad(set_to_none=True)
 
             model_inputs, labels = _unpack_batch(batch, device=device)
             if "labels" not in model_inputs:
@@ -271,28 +272,31 @@ def train_sft_ddp(
                 loss = loss / train_config.grad_accum_steps
 
             loss.backward()
+            for p in ddp_model.parameters():
+                if p.requires_grad:
+                    logger.info(p.grad.norm())
             running_loss += float(loss.item()) * train_config.grad_accum_steps
 
             if (step + 1) % train_config.grad_accum_steps == 0:
+                logger.info("Calling optimizer step")
                 optimizer.step()
-                scheduler.step()
+                # scheduler.step()
 
                 global_step += 1
 
-                # Log only on rank 0 to avoid spam
                 if (step + 1) % train_config.log_every == 0 and rank == 0:
                     avg_loss = running_loss / train_config.log_every
                     current_time = time.time() - start_time
-                    last_lr = scheduler.get_last_lr()
-                    lr = last_lr[0] if last_lr else None
+                    # last_lr = scheduler.get_last_lr()
+                    # lr = last_lr[0] if last_lr else None
 
                     log_dict: dict[str, Any] = {
                         "train/loss": avg_loss,
                         "train/time": current_time,
                         "train/step": global_step,
                     }
-                    if lr is not None:
-                        log_dict["train/learning_rate"] = lr
+                    # if lr is not None:
+                    # log_dict["train/learning_rate"] = lr
 
                     if wandb_run is not None:
                         wandb_run.log(log_dict, step=global_step)
@@ -300,8 +304,8 @@ def train_sft_ddp(
                     if writer is not None:
                         writer.add_scalar("train/loss", avg_loss, global_step)
                         writer.add_scalar("train/time", current_time, global_step)
-                        if lr is not None:
-                            writer.add_scalar("train/learning_rate", lr, global_step)
+                        # if lr is not None:
+                        # writer.add_scalar("train/learning_rate", lr, global_step)
 
                         if router_logits is not None and writer is not None:
                             router_log_items: dict[str, Any] = {}
@@ -384,7 +388,7 @@ def train_sft_ddp(
                     "val_loss": global_val_loss,
                     "model_state_dict": ddp_model.module.state_dict(),
                     "optimizer_state_dict": optimizer.state_dict(),
-                    "scheduler_state_dict": scheduler.state_dict(),
+                    # "scheduler_state_dict": scheduler.state_dict(),
                     "train_config": getattr(train_config, "__dict__", None),
                 },
                 last_ckpt_path,
