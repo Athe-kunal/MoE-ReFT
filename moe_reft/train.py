@@ -325,7 +325,6 @@ def train_sft_ddp(
 
                 running_loss = 0.0
 
-        # ===== Validation after each epoch =====
         ddp_model.eval()
         val_loss_sum = 0.0
         val_steps = 0
@@ -391,7 +390,6 @@ def train_sft_ddp(
                 last_ckpt_path,
             )
 
-    # Optional: barrier and cleanup()
     dist.barrier()
 
     if rank == 0:

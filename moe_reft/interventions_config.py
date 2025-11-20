@@ -1,4 +1,3 @@
-import torch
 import pydantic
 from typing import Literal, Self
 
@@ -19,13 +18,62 @@ INTERVENTION_PATTERNS = [
 
 
 class InterventionsConfig(pydantic.BaseModel):
-    intervention_type: InterventionType = "LoreftIntervention"
-    intervention_layers: InterventionLayers = "all"
-    intervention_places: InterventionPlace = "pre_moe"
-    low_rank_dimension: int = 8
-    dropout: float = 0.0
-    act_fn: str | None = None  # e.g. "gelu", "relu", or None/"linear"
-    init_orth: bool = True  # if your rotate layer supports it
+    """Configuration settings controlling REFT / DIREFT interventions applied to MoE layers."""
+
+    intervention_type: InterventionType = pydantic.Field(
+        default="LoreftIntervention",
+        description=(
+            "Specifies which intervention module to inject. "
+            "'LoreftIntervention' applies low-rank feature transformations "
+            "(LoReFT-style REFT), while 'DireftIntervention' applies "
+            "directional interventions (DiReFT) using directional vectors."
+        ),
+    )
+
+    intervention_layers: InterventionLayers = pydantic.Field(
+        default="all",
+        description=(
+            "Controls which transformer layers receive interventions:\n"
+            "- 'all': apply to every layer\n"
+            "- 'odd_only': apply only to odd-numbered layers\n"
+            "- 'even_only': apply only to even-numbered layers\n"
+            "- 'alternate': apply in alternating pattern depending on index\n"
+            "Useful for ablations and reducing compute overhead."
+        ),
+    )
+
+    intervention_places: InterventionPlace = pydantic.Field(
+        default="pre_moe",
+        description=(
+            "Where to inject the intervention relative to the MoE block:\n"
+            "- 'pre_moe': before the MoE router + expert blocks\n"
+            "- 'after_moe': after the expert outputs are combined\n"
+            "Choosing pre/post allows control over how interventions influence routing or expert mixing."
+        ),
+    )
+
+    low_rank_dimension: int = pydantic.Field(
+        default=8,
+        description=("Rank of the low-rank projection used for intervention layers. "),
+    )
+
+    dropout: float = pydantic.Field(
+        default=0.0,
+        description=("Dropout probability applied inside the intervention layer. " "Useful for regularization"),
+    )
+
+    act_fn: str | None = pydantic.Field(
+        default=None,
+        description=(
+            "Optional activation function used inside the intervention module. "
+            "Examples: 'gelu', 'relu', 'silu'. If None, the intervention is linear. "
+        ),
+    )
+
+    init_orth: bool = pydantic.Field(
+        default=True,
+        description=("Whether to orthogonally initialize the low-rank projection matrices. "),
+    )
 
     @pydantic.model_validator(mode="after")
     def validate_interventions_config(self) -> Self:
