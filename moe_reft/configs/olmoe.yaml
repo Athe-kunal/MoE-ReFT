@@ -1,12 +1,12 @@
 train:
   save_dir: "gsm8k_run/"
-  epochs: 3
+  epochs: 500
   learning_rate: 1.0e-3
   grad_accum_steps: 2
   max_grad_norm: 1.0
   amp: true
   amp_dtype: "bfloat16" # mapped to torch.bfloat16 in code
-  log_every: 50
+  log_every: 0
   ignore_index: -100
   num_warmup_steps: 100
   device: null # e.g. "cuda", "cuda:0", or null for auto

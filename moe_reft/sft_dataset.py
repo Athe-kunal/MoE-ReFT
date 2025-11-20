@@ -218,7 +218,7 @@ class SFTTransform(Transform):
 
         idx_after = find_after_subseq_batched(input_ids, self.response_template_ids)
         label_ids = torch.arange(0, input_ids.shape[1])
-        labels = torch.where(label_ids[None, :] > idx_after[:, None], input_ids, CROSS_ENTROPY_IGNORE_INDEX)
+        labels = torch.where(label_ids[None, :] >= idx_after[:, None], input_ids, CROSS_ENTROPY_IGNORE_INDEX)
 
         return {
             "input_ids": input_ids[0],

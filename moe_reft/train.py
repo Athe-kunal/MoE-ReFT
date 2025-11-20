@@ -460,6 +460,7 @@ def run_main_olmoe(
         split="test",
         name="main",
     )
+    # train_sft_ddp(model=custom_model, train_dataset=dataset, val_dataset=dataset, train_config=train_config)
     train_sft_ddp(
         model=custom_model, train_dataset=train_dataset, val_dataset=val_dataset, train_config=train_config
     )

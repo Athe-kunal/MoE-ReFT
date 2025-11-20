@@ -1,24 +1,19 @@
-from __future__ import annotations
+from moe_reft import sft_dataset
+from transformers import AutoTokenizer
 
-from dataclasses import dataclass
-from typing import Mapping, MutableMapping, Sequence
+tokenizer_model_name: str = "allenai/OLMoE-1B-7B-0125-Instruct"
 
-import fnmatch
-import torch
-from loguru import logger
-from torch import nn
-from transformers import AutoModelForCausalLM, PreTrainedModel
+tokenizer = AutoTokenizer.from_pretrained(tokenizer_model_name)
+response_template = sft_dataset.extract_response_template(tokenizer)
 
-map_dtype = torch.bfloat16  # optional casting
-map_device = torch.device("cuda")  # optional device move
-
-# hf_model_name_or_path="allenai/OLMoE-1B-7B-0125-Instruct"
-hf_model_name_or_path = "allenai/OLMoE-1B-7B-0924-Instruct"
-
-hf_model: PreTrainedModel = AutoModelForCausalLM.from_pretrained(
-    hf_model_name_or_path,
-    dtype=map_dtype if map_dtype is not None else None,
-    trust_remote_code=True,
+train_dataset = sft_dataset.SFTDataset(
+    source="openai/gsm8k",
+    tokenizer=tokenizer,
+    response_template_ids=tokenizer(response_template)["input_ids"],
+    system_key=None,
+    system_message="You are a helpful math tutor. Solve step by step.",
+    user_key="question",
+    assistant_key="answer",
+    split="train",
+    name="main",
 )
-
-src_sd = hf_model.state_dict()
