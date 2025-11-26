@@ -13,7 +13,6 @@ InterventionType = Literal["LoreftIntervention", "DireftIntervention"]
 INTERVENTION_PATTERNS = [
     "*.pre_moe_intervention.*",
     "*.after_moe_intervention.*",
-    "*.pre_moe_intervenetion.*",  # typo fallback
 ]
 
 
