@@ -638,7 +638,7 @@ class OlmoeDecoderLayer(GradientCheckpointingLayer):
         self.input_layernorm = OlmoeRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.post_attention_layernorm = OlmoeRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
-        self.pre_moe_intervenetion: nn.Module = build_intervention(
+        self.pre_moe_intervention: nn.Module = build_intervention(
             icfg=config.intervention_config,
             layer_idx=layer_idx,
             hidden_size=config.hidden_size,
