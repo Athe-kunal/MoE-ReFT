@@ -277,9 +277,14 @@ def train_sft_ddp(
 
                 with record_function("backward_pass"):
                     loss.backward()
+                total_norm_sq = 0.0
                 for p in ddp_model.parameters():
-                    if p.requires_grad:
-                        logger.info(p.grad.norm())
+                    if p.requires_grad and p.grad is not None:
+                        total_norm_sq += p.grad.data.norm(2).item() ** 2
+
+                grad_norm_ = total_norm_sq**0.5
+
+                wandb.log({"train/grad_norm": grad_norm_})
                 running_loss += float(loss.item()) * train_config.grad_accum_steps
 
                 if (step + 1) % train_config.grad_accum_steps == 0:
