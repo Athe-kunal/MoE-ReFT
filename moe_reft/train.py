@@ -279,8 +279,7 @@ def train_sft_ddp(
                     loss.backward()
                 for p in ddp_model.parameters():
                     if p.requires_grad:
-                        if p.grad:
-                            logger.info(p.grad.norm())
+                        logger.info(p.grad.norm())
                 running_loss += float(loss.item()) * train_config.grad_accum_steps
 
                 if (step + 1) % train_config.grad_accum_steps == 0:
