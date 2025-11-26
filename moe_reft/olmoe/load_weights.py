@@ -30,7 +30,7 @@ class TransferReport:
         return TransferReport(copied=[], skipped_shape=[], skipped_missing=[], skipped_intervention=[])
 
 
-def _matches_any(name: str, patterns: Sequence[str]) -> bool:
+def matches_any(name: str, patterns: Sequence[str]) -> bool:
     return any(fnmatch.fnmatch(name, pat) for pat in patterns)
 
 
@@ -57,7 +57,7 @@ def build_partial_state_dict(
         src_tensor: torch.Tensor = src_sd[src_name]
 
         # Skip intervention weights from HF
-        if _matches_any(src_name, intervention_patterns):
+        if matches_any(src_name, intervention_patterns):
             report.skipped_intervention.append(src_name)
             continue
 
@@ -69,7 +69,7 @@ def build_partial_state_dict(
             logger.info(f"Missing for {src_name=}")
             continue
 
-        if _matches_any(matched_dst, intervention_patterns):
+        if matches_any(matched_dst, intervention_patterns):
             report.skipped_intervention.append(src_name)
             continue
 
@@ -160,7 +160,7 @@ def load_hf_into_custom_model(
         param.requires_grad = False
 
     for name, param in custom_model.named_parameters():
-        if _matches_any(name, intervention_patterns):
+        if matches_any(name, intervention_patterns):
             param.requires_grad = True
 
     # 5) Print parameter stats

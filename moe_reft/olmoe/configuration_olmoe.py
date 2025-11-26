@@ -218,7 +218,7 @@ class OlmoeInterventionsConfig(PretrainedConfig):
 
     def __init__(
         self,
-        interventions_config: interventions_config.InterventionsConfig = interventions_config.InterventionsConfig(),
+        interventions_config: interventions_config.InterventionsConfig,
         vocab_size=50304,
         hidden_size=2048,
         intermediate_size=1024,

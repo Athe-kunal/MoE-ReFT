@@ -168,14 +168,14 @@ def train_sft_ddp(
     # )
 
     # Distributed samplers
-    train_sampler = DistributedSampler(
+    train_sampler: DistributedSampler[Any] = DistributedSampler(
         train_dataset,
         num_replicas=world_size,
         rank=rank,
         shuffle=False,
         drop_last=False,
     )
-    val_sampler = DistributedSampler(
+    val_sampler: DistributedSampler[Any] = DistributedSampler(
         val_dataset,
         num_replicas=world_size,
         rank=rank,
@@ -422,7 +422,7 @@ def run_main_olmoe(
     train_config, interventions_config_, _ = read_config.load_all_configs(config_path)
 
     custom_model = modeling_olmoe.OlmoeForCausalLM(
-        configuration_olmoe.OlmoeInterventionsConfig(interventios_config=interventions_config_)
+        configuration_olmoe.OlmoeInterventionsConfig(interventions_config=interventions_config_)
     )
 
     report = load_weights.load_hf_into_custom_model(
@@ -436,7 +436,7 @@ def run_main_olmoe(
     logger.info(f"{report.summary()}")
 
     for name, param in custom_model.named_parameters():
-        if load_weights._matches_any(name, interventions_config.INTERVENTION_PATTERNS):
+        if load_weights.matches_any(name, interventions_config.INTERVENTION_PATTERNS):
             param.requires_grad = True
 
     # 5) Print parameter stats
