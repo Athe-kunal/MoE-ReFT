@@ -291,8 +291,11 @@ def train_sft_ddp(
                     grad_norm = total_norm_sq**0.5
 
                     logger.info(f"Calling optimizer step with {grad_norm=}")
-                    wandb.log({"train/grad_norm": grad_norm})
+                    # wandb.log({"train/grad_norm": grad_norm})
                     # scheduler.step()
+                    for n, p in model.named_parameters():
+                        if p.requires_grad and "pre_moe_intervention" in n:
+                            print(n, p.grad.abs().mean().item())
 
                     global_step += 1
 
