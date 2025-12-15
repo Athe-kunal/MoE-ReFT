@@ -21,12 +21,7 @@ class LowRankRotateLayer(torch.nn.Module):
             torch.nn.init.orthogonal_(self.weight)
 
     def forward(self, x):
-        # return torch.matmul(x.to(self.weight.dtype), self.weight)
-        # Errors: RuntimeError: torch.linalg.householder_product: tau dtype Float does not match input dtype BFloat16
-        # "orgqr_cuda" not implemented for 'BFloat16'
-        with torch.autocast(device_type="cuda", dtype=torch.float32):
-            out = torch.matmul(x, self.weight).to(x.dtype)
-        return out.to(x.dtype)
+        return torch.matmul(x, self.weight)
 
 
 class LoreftIntervention(SourcelessIntervention, TrainableIntervention, DistributedRepresentationIntervention):
@@ -51,7 +46,7 @@ class LoreftIntervention(SourcelessIntervention, TrainableIntervention, Distribu
         output = base + torch.matmul(
             (self.act_fn(self.learned_source(base)) - rotated_base), self.rotate_layer.weight.T
         )
-        return self.dropout(output.to(base.dtype))
+        return self.dropout(output)
 
     def state_dict(self, *args, **kwargs):
         """
@@ -104,7 +99,7 @@ class NoreftIntervention(SourcelessIntervention, TrainableIntervention, Distribu
     def forward(self, base, source=None, subspaces=None):
         proj_base = self.proj_layer(base)
         output = base + torch.matmul((self.act_fn(self.learned_source(base)) - proj_base), self.proj_layer.weight)
-        return self.dropout(output.to(base.dtype))
+        return self.dropout(output)
 
 
 class ConsreftIntervention(SourcelessIntervention, TrainableIntervention, DistributedRepresentationIntervention):
@@ -121,7 +116,7 @@ class ConsreftIntervention(SourcelessIntervention, TrainableIntervention, Distri
     def forward(self, base, source=None, subspaces=None):
         rotated_base = self.rotate_layer(base)
         output = base + torch.matmul((self.learned_source - rotated_base), self.rotate_layer.weight.T)
-        return output.to(base.dtype)
+        return output
 
 
 class LobireftIntervention(SourcelessIntervention, TrainableIntervention, DistributedRepresentationIntervention):
@@ -138,7 +133,7 @@ class LobireftIntervention(SourcelessIntervention, TrainableIntervention, Distri
 
     def forward(self, base, source=None, subspaces=None):
         output = base + torch.matmul(self.learned_source, self.rotate_layer.weight.T)
-        return self.dropout(output.to(base.dtype))
+        return self.dropout(output)
 
 
 class DireftIntervention(SourcelessIntervention, TrainableIntervention, DistributedRepresentationIntervention):
@@ -159,12 +154,11 @@ class DireftIntervention(SourcelessIntervention, TrainableIntervention, Distribu
         )
 
     def forward(self, base, source=None, subspaces=None):
-        cast_base = base.to(self.learned_source.weight.dtype)
         output = base + torch.matmul(
-            (self.act_fn(self.learned_source(cast_base))).to(self.rotate_layer.weight.dtype),
+            self.act_fn(self.learned_source(base)),
             self.rotate_layer.weight.T,
         )
-        return self.dropout(output.to(base.dtype))
+        return self.dropout(output)
 
 
 class NodireftIntervention(SourcelessIntervention, TrainableIntervention, DistributedRepresentationIntervention):
@@ -187,4 +181,4 @@ class NodireftIntervention(SourcelessIntervention, TrainableIntervention, Distri
 
     def forward(self, base, source=None, subspaces=None):
         output = base + torch.matmul(self.act_fn(self.learned_source(base)), self.proj_layer.weight)
-        return self.dropout(output.to(base.dtype))
+        return self.dropout(output)

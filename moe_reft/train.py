@@ -92,7 +92,7 @@ def train_sft(model: nn.Module, dataloader: DataLoader, train_config: datamodels
                     model_inputs["labels"] = labels
                 total_tokens += model_inputs["input_ids"].size(0)
                 with record_function("forward_pass"):
-                    with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                    with torch.autocast(device_type="cuda", dtype=torch.float32):
                         outputs = model(**model_inputs)
                 with record_function("backward_pass"):
 
@@ -263,7 +263,7 @@ def train_sft_ddp(
                 total_tokens += model_inputs["input_ids"].size(0)
 
                 with record_function("forward_pass"):
-                    with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                    with torch.autocast(device_type="cuda", dtype=torch.float32):
                         outputs = ddp_model(**model_inputs)
 
                 router_logits = getattr(outputs, "router_logits", None)
@@ -282,6 +282,12 @@ def train_sft_ddp(
                 if (step + 1) % train_config.grad_accum_steps == 0 or step + 1 == len(
                     train_loader
                 ):  # last batch needs to be updated
+                    # Clip gradients to prevent explosion
+                    if train_config.max_grad_norm is not None and train_config.max_grad_norm > 0:
+                        torch.nn.utils.clip_grad_norm_(
+                            [p for p in ddp_model.parameters() if p.requires_grad],
+                            max_norm=train_config.max_grad_norm,
+                        )
                     optimizer.step()
                     total_norm_sq = 0.0
                     for p in ddp_model.parameters():
@@ -358,7 +364,7 @@ def train_sft_ddp(
                     if "labels" not in model_inputs:
                         model_inputs["labels"] = labels
 
-                    with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                    with torch.autocast(device_type="cuda", dtype=torch.float32):
                         outputs = ddp_model(**model_inputs)
 
                     if hasattr(outputs, "loss") and outputs.loss is not None:
@@ -439,7 +445,7 @@ def run_main_olmoe(
         hf_model_name_or_path=model_name,
         custom_model=custom_model,
         intervention_patterns=["*.pre_moe_intervention.*", "*.after_moe_intervention.*"],
-        map_dtype=torch.bfloat16,  # optional casting
+        map_dtype=torch.float32,  # optional casting
         map_device=torch.device("cuda"),  # optional device move
         trust_remote_code=False,
     )
@@ -482,7 +488,6 @@ def run_main_olmoe(
         split="test",
         name="main",
     )
-    # train_sft_ddp(model=custom_model, train_dataset=dataset, val_dataset=dataset, train_config=train_config)
     train_sft_ddp(
         model=custom_model, train_dataset=train_dataset, val_dataset=val_dataset, train_config=train_config
     )
