@@ -8,7 +8,7 @@ class TrainConfig:
     epochs: int
     learning_rate: float
     grad_accum_steps: int
-    max_grad_norm: float
+    max_grad_norm: float | None
     amp: bool
     amp_dtype: torch.dtype
     log_every: int

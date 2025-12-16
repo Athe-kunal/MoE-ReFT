@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import os
+
+# Disable tokenizers parallelism to avoid deadlock warnings with DataLoader workers
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
 from typing import Any
 import dataclasses
-import os
 import time
 import torch
 from torch import nn
@@ -92,8 +96,8 @@ def train_sft(model: nn.Module, dataloader: DataLoader, train_config: datamodels
                     model_inputs["labels"] = labels
                 total_tokens += model_inputs["input_ids"].size(0)
                 with record_function("forward_pass"):
-                    with torch.autocast(device_type="cuda", dtype=torch.float32):
-                        outputs = model(**model_inputs)
+                    # with torch.autocast(device_type="cuda", dtype=torch.float32):
+                    outputs = model(**model_inputs)
                 with record_function("backward_pass"):
 
                     if hasattr(outputs, "loss") and outputs.loss is not None:
@@ -162,10 +166,10 @@ def train_sft_ddp(
     )
 
     # Cosine scheduler over steps; T_0 here is warmup / first cycle length
-    # scheduler = CosineAnnealingWarmRestarts(
-    #     optimizer,
-    #     T_0=train_config.num_warmup_steps,
-    # )
+    scheduler = CosineAnnealingWarmRestarts(
+        optimizer,
+        T_0=train_config.num_warmup_steps,
+    )
 
     # Distributed samplers
     train_sampler: DistributedSampler[Any] = DistributedSampler(
@@ -263,8 +267,8 @@ def train_sft_ddp(
                 total_tokens += model_inputs["input_ids"].size(0)
 
                 with record_function("forward_pass"):
-                    with torch.autocast(device_type="cuda", dtype=torch.float32):
-                        outputs = ddp_model(**model_inputs)
+                    # with torch.autocast(device_type="cuda", dtype=torch.float32):
+                    outputs = ddp_model(**model_inputs)
 
                 router_logits = getattr(outputs, "router_logits", None)
 
@@ -298,7 +302,7 @@ def train_sft_ddp(
 
                     logger.info(f"Calling optimizer step with {grad_norm=}")
                     # wandb.log({"train/grad_norm": grad_norm})
-                    # scheduler.step()
+                    scheduler.step()
                     for n, p in model.named_parameters():
                         if p.requires_grad and "pre_moe_intervention" in n:
                             print(n, p.grad.abs().mean().item())
@@ -308,16 +312,16 @@ def train_sft_ddp(
                     if (step + 1) % train_config.log_every == 0 and rank == 0:
                         avg_loss = running_loss / train_config.log_every
                         current_time = time.time() - start_time
-                        # last_lr = scheduler.get_last_lr()
-                        # lr = last_lr[0] if last_lr else None
+                        last_lr = scheduler.get_last_lr()
+                        lr = last_lr[0] if last_lr else None
 
                         log_dict: dict[str, Any] = {
                             "train/loss": avg_loss,
                             "train/time": current_time,
                             "train/step": global_step,
                         }
-                        # if lr is not None:
-                        # log_dict["train/learning_rate"] = lr
+                        if lr is not None:
+                            log_dict["train/learning_rate"] = lr
 
                         if wandb_run is not None:
                             wandb_run.log(log_dict, step=global_step)
@@ -325,8 +329,8 @@ def train_sft_ddp(
                         if writer is not None:
                             writer.add_scalar("train/loss", avg_loss, global_step)
                             writer.add_scalar("train/time", current_time, global_step)
-                            # if lr is not None:
-                            # writer.add_scalar("train/learning_rate", lr, global_step)
+                            if lr is not None:
+                                writer.add_scalar("train/learning_rate", lr, global_step)
 
                             if router_logits is not None and writer is not None:
                                 router_log_items: dict[str, Any] = {}
@@ -364,8 +368,8 @@ def train_sft_ddp(
                     if "labels" not in model_inputs:
                         model_inputs["labels"] = labels
 
-                    with torch.autocast(device_type="cuda", dtype=torch.float32):
-                        outputs = ddp_model(**model_inputs)
+                    # with torch.autocast(device_type="cuda", dtype=torch.float32):
+                    outputs = ddp_model(**model_inputs)
 
                     if hasattr(outputs, "loss") and outputs.loss is not None:
                         loss = outputs.loss
@@ -413,7 +417,7 @@ def train_sft_ddp(
                         "val_loss": global_val_loss,
                         "model_state_dict": ddp_model.module.state_dict(),
                         "optimizer_state_dict": optimizer.state_dict(),
-                        # "scheduler_state_dict": scheduler.state_dict(),
+                        "scheduler_state_dict": scheduler.state_dict(),
                         "train_config": getattr(train_config, "__dict__", None),
                     },
                     last_ckpt_path,

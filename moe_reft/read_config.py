@@ -53,7 +53,7 @@ def load_all_configs(
         epochs=int(train_section.epochs),
         learning_rate=float(train_section.learning_rate),
         grad_accum_steps=int(train_section.grad_accum_steps),
-        max_grad_norm=float(train_section.max_grad_norm),
+        max_grad_norm=train_section.max_grad_norm,
         amp=bool(train_section.amp),
         amp_dtype=amp_dtype,
         log_every=int(train_section.log_every),

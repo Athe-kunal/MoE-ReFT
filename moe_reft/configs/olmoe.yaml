@@ -3,9 +3,9 @@ train:
   epochs: 3
   learning_rate: 5.0e-4
   grad_accum_steps: 2
-  max_grad_norm: 1.0
+  max_grad_norm: null
   amp: true
-  amp_dtype: "bfloat16" # mapped to torch.bfloat16 in code
+  amp_dtype: "float32" # mapped to torch.bfloat16 in code
   log_every: 50
   ignore_index: -100
   num_warmup_steps: 100
