@@ -1,6 +1,6 @@
 train:
   save_dir: "gsm8k_run/"
-  epochs: 3
+  epochs: 1
   learning_rate: 5.0e-4
   grad_accum_steps: 2
   max_grad_norm: null

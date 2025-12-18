@@ -711,8 +711,8 @@ class OlmoeDecoderLayer(GradientCheckpointingLayer):
         residual = hidden_states
         hidden_states = self.post_attention_layernorm(hidden_states)
 
-        hidden_states = self.pre_moe_intervention.forward(hidden_states)
-        hidden_states, router_logits = self.mlp.forward(hidden_states)
+        hidden_states = self.pre_moe_intervention(hidden_states)
+        hidden_states, router_logits = self.mlp(hidden_states)
         hidden_states = residual + hidden_states
 
         hidden_states = self.after_moe_intervention.forward(hidden_states)

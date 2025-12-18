@@ -45,6 +45,7 @@ def _manual_shifted_ce_loss(
     logits: torch.Tensor,
     labels: torch.Tensor,
 ) -> torch.Tensor:
+    logger.info("Going into manual loss calculation")
     shift_logits = logits[:, :-1, :].contiguous()
     shift_labels = labels[:, 1:].contiguous()
     loss_fct = nn.CrossEntropyLoss(ignore_index=-100)
@@ -55,7 +56,7 @@ def build_optimizer_from_requires_grad(
     model: nn.Module,
     *,
     lr: float = 1e-4,
-    weight_decay: float = 0.01,
+    weight_decay: float = 0.0,
     betas: tuple[float, float] = (0.9, 0.999),
     eps: float = 1e-8,
 ) -> Optimizer:
@@ -160,11 +161,12 @@ def train_sft_ddp(
         find_unused_parameters=False,  # or True if needed
     )
 
-    optimizer = optim.AdamW(
-        [p for p in ddp_model.parameters() if p.requires_grad],
-        lr=train_config.learning_rate,
-    )
+    # optimizer = optim.AdamW(
+    # [p for p in ddp_model.parameters() if p.requires_grad],
+    # lr=train_config.learning_rate,
+    # )
 
+    optimizer = build_optimizer_from_requires_grad(ddp_model, lr=train_config.learning_rate)
     # Cosine scheduler over steps; T_0 here is warmup / first cycle length
     scheduler = CosineAnnealingWarmRestarts(
         optimizer,
@@ -263,9 +265,9 @@ def train_sft_ddp(
                 if "labels" not in model_inputs:
                     model_inputs["labels"] = labels
 
-                # this is actually counting batches, not tokens — up to you
                 total_tokens += model_inputs["input_ids"].size(0)
-
+                num_supervised = int((model_inputs["labels"] != -100).sum().item())
+                logger.info(f"{rank=} {step=} {num_supervised=}")
                 with record_function("forward_pass"):
                     # with torch.autocast(device_type="cuda", dtype=torch.float32):
                     outputs = ddp_model(**model_inputs)
@@ -275,6 +277,7 @@ def train_sft_ddp(
                 if hasattr(outputs, "loss") and outputs.loss is not None:
                     loss = outputs.loss
                     loss = loss / train_config.grad_accum_steps
+                    # logger.info(f"{loss=}")
                 else:
                     loss = _manual_shifted_ce_loss(outputs[0], labels)
                     loss = loss / train_config.grad_accum_steps
@@ -303,9 +306,9 @@ def train_sft_ddp(
                     logger.info(f"Calling optimizer step with {grad_norm=}")
                     # wandb.log({"train/grad_norm": grad_norm})
                     scheduler.step()
-                    for n, p in model.named_parameters():
-                        if p.requires_grad and "pre_moe_intervention" in n:
-                            print(n, p.grad.abs().mean().item())
+                    # for n, p in model.named_parameters():
+                    #     if p.requires_grad and "pre_moe_intervention" in n:
+                    #         print(n, p.grad.abs().mean().item())
 
                     global_step += 1
 
@@ -373,6 +376,7 @@ def train_sft_ddp(
 
                     if hasattr(outputs, "loss") and outputs.loss is not None:
                         loss = outputs.loss
+                        logger.info(f"{loss=}")
                     else:
                         loss = _manual_shifted_ce_loss(outputs[0], labels)
 
@@ -464,7 +468,11 @@ def run_main_olmoe(
     print(f"Total parameters:     {total_params}")
     print(f"Trainable parameters: {trainable_params}")
 
-    logger.info(f"Parameter stats — total: {total_params}, trainable: {trainable_params}")
+    percent_trainable = (trainable_params / total_params) * 100 if total_params > 0 else 0
+    logger.info(
+        f"Parameter stats — total: {total_params}, trainable: {trainable_params} "
+        f"({percent_trainable:.2f}% trainable)"
+    )
     # dataloader, _, dataset = tiny_sft.build_tiny_sft_dataloader(model_name=tokenizer_model_name)
     # train_sft(model=custom_model, dataloader=dataloader, train_config=train_config)
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_model_name)
