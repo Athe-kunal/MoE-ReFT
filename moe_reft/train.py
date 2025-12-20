@@ -266,8 +266,8 @@ def train_sft_ddp(
                     model_inputs["labels"] = labels
 
                 total_tokens += model_inputs["input_ids"].size(0)
-                num_supervised = int((model_inputs["labels"] != -100).sum().item())
-                logger.info(f"{rank=} {step=} {num_supervised=}")
+                # num_supervised = int((model_inputs["labels"] != -100).sum().item())
+                # logger.info(f"{rank=} {step=} {num_supervised=}")
                 with record_function("forward_pass"):
                     # with torch.autocast(device_type="cuda", dtype=torch.float32):
                     outputs = ddp_model(**model_inputs)
@@ -303,7 +303,7 @@ def train_sft_ddp(
 
                     grad_norm = total_norm_sq**0.5
 
-                    logger.info(f"Calling optimizer step with {grad_norm=}")
+                    # logger.info(f"Calling optimizer step with {grad_norm=}")
                     # wandb.log({"train/grad_norm": grad_norm})
                     scheduler.step()
                     # for n, p in model.named_parameters():
@@ -335,7 +335,7 @@ def train_sft_ddp(
                             if lr is not None:
                                 writer.add_scalar("train/learning_rate", lr, global_step)
 
-                            if router_logits is not None and writer is not None:
+                            if router_logits is not None:
                                 router_log_items: dict[str, Any] = {}
                                 for layer_idx, layer_logits in enumerate(router_logits):
                                     if layer_logits is None:
@@ -354,8 +354,8 @@ def train_sft_ddp(
                                         router_log_items[f"router_logits/layer_{layer_idx}_hist"] = (
                                             wandb.Histogram(logits_cpu.view(-1).numpy())
                                         )
-                            if wandb_run is not None and router_log_items:
-                                wandb_run.log(router_log_items, step=global_step)
+                                if wandb_run is not None and router_log_items:
+                                    wandb_run.log(router_log_items, step=global_step)
 
                         logger.info(f"[Train] Epoch {epoch} | Step {global_step} | Loss: {avg_loss:.4f}")
 
@@ -376,7 +376,6 @@ def train_sft_ddp(
 
                     if hasattr(outputs, "loss") and outputs.loss is not None:
                         loss = outputs.loss
-                        logger.info(f"{loss=}")
                     else:
                         loss = _manual_shifted_ce_loss(outputs[0], labels)
 
@@ -427,7 +426,8 @@ def train_sft_ddp(
                     last_ckpt_path,
                 )
 
-        dist.barrier()
+            # Sync all ranks before starting next epoch
+            dist.barrier()
 
         if rank == 0:
             if writer is not None:
@@ -435,7 +435,7 @@ def train_sft_ddp(
                 writer.close()
             if wandb_run is not None:
                 wandb_run.finish()
-        prof.export_chrome_trace("trace.json")
+    prof.export_chrome_trace("trace.json")
 
 
 def run_main_olmoe(
@@ -475,6 +475,7 @@ def run_main_olmoe(
     )
     # dataloader, _, dataset = tiny_sft.build_tiny_sft_dataloader(model_name=tokenizer_model_name)
     # train_sft(model=custom_model, dataloader=dataloader, train_config=train_config)
+    # train_sft_ddp(model=custom_model, train_dataset=dataset, val_dataset=dataset, train_config=train_config)
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_model_name)
     response_template = sft_dataset.extract_response_template(tokenizer)
     response_template_ids = tokenizer(response_template)["input_ids"]

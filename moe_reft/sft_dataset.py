@@ -1,4 +1,5 @@
 import re
+import random
 from typing import Any, Callable, Mapping, Optional, Protocol, Mapping, cast
 from loguru import logger
 from datasets import load_dataset
@@ -113,7 +114,8 @@ class SFTDataset(Dataset):
         self.validate_one_sample()
 
     def validate_one_sample(self) -> None:
-        sample = self._prepare_sample(self._validate_data[0])
+        idx = random.randint(0, len(self._validate_data) - 1)
+        sample = self._prepare_sample(self._validate_data[idx])
         decoded_input = self.tokenizer.decode(sample["input_ids"].tolist(), skip_special_tokens=False)
         logger.info(f"Decoded Input (Full Prompt + Response)\n{decoded_input}")
 
