@@ -108,7 +108,8 @@ def _count_parameters(model: nn.Module) -> tuple[int, int]:
 
 def load_hf_into_custom_model(
     *,
-    hf_model_name_or_path: str,
+    hf_model_name_or_path: str | None = None,
+    pt_file: str | None = None,
     custom_model: nn.Module,
     intervention_patterns: Sequence[str] | None = None,
     map_dtype: torch.dtype | None = None,
@@ -116,27 +117,38 @@ def load_hf_into_custom_model(
     trust_remote_code: bool = False,
 ) -> TransferReport:
     """
-    Load a HF Causal LM and copy overlapping weights into `custom_model`,
+    Load either a HF Causal LM (by name/path) or a torch.pt file, copy overlapping weights into `custom_model`,
     skipping intervention modules, then freeze all parameters except those
     matching `intervention_patterns`.
+
+    You must specify either `hf_model_name_or_path` or `pt_file` (but not both).
 
     `intervention_patterns`: fnmatch patterns to mark modules as *trainable*
                              (e.g., "*.pre_moe_intervention.*").
     """
 
+    if (hf_model_name_or_path is None) == (pt_file is None):
+        raise ValueError("You must specify exactly one of hf_model_name_or_path or pt_file.")
     if intervention_patterns is None:
         intervention_patterns = [
             "*.pre_moe_intervention.*",
             "*.after_moe_intervention.*",
             "*.pre_moe_intervenetion.*",  # typo fallback
         ]
-    # 1) Load HF model & grab its state dict
-    hf_model: PreTrainedModel = AutoModelForCausalLM.from_pretrained(
-        hf_model_name_or_path,
-        dtype=map_dtype if map_dtype is not None else None,
-        trust_remote_code=trust_remote_code,
-    )
-    src_sd = hf_model.state_dict()
+
+    # 1) Load state dict from HF or torch file
+    if hf_model_name_or_path is not None:
+        hf_model: PreTrainedModel = AutoModelForCausalLM.from_pretrained(
+            hf_model_name_or_path,
+            dtype=map_dtype if map_dtype is not None else None,
+            trust_remote_code=trust_remote_code,
+        )
+        src_sd = hf_model.state_dict()
+    else:
+        assert pt_file
+        src_sd = torch.load(pt_file, map_location="cpu")
+        if isinstance(src_sd, dict) and "model_state_dict" in src_sd:
+            src_sd = src_sd["model_state_dict"]
 
     # 2) Build filtered state dict compatible with your custom model
     filtered_sd, report = build_partial_state_dict(

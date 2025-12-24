@@ -9,7 +9,6 @@ from typing import Any
 import dataclasses
 import time
 import torch
-import yaml
 from torch import nn
 
 from torch.optim import Optimizer
@@ -160,11 +159,6 @@ def train_sft_ddp(
         output_device=local_rank,
         find_unused_parameters=False,  # or True if needed
     )
-
-    # optimizer = optim.AdamW(
-    # [p for p in ddp_model.parameters() if p.requires_grad],
-    # lr=train_config.learning_rate,
-    # )
 
     optimizer = build_optimizer_from_requires_grad(ddp_model, lr=train_config.learning_rate)
     # Cosine scheduler over steps; T_0 here is warmup / first cycle length
