@@ -392,9 +392,13 @@ class OlmoeFlashAttention2(OlmoeAttention):
         # Flash attention requires the input to have the shape
         # batch_size x seq_length x head_dim x hidden_dim
         # therefore we just need to keep the original shape
-        query_states = query_states.view(bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)
-        key_states = key_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
-        value_states = value_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
+        query_states = query_states.view(bsz, q_len, self.config.num_attention_heads, self.head_dim).transpose(
+            1, 2
+        )
+        key_states = key_states.view(bsz, q_len, self.config.num_key_value_heads, self.head_dim).transpose(1, 2)
+        value_states = value_states.view(bsz, q_len, self.config.num_key_value_heads, self.head_dim).transpose(
+            1, 2
+        )
 
         cos, sin = position_embeddings
         query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
@@ -406,7 +410,7 @@ class OlmoeFlashAttention2(OlmoeAttention):
                 key_states, value_states, self.layer_idx, cache_kwargs
             )
 
-        # TODO: These transpose are quite inefficient but Flash Attention requires the layout [batch_size, sequence_length, num_heads, head_dim]. We would need to refactor the KV cache
+        # TODO: These transpose are quite inefficient but Flash Attention requires the layout [batch_size, sequence_length, num_attention_heads, head_dim]. We would need to refactor the KV cache
         # to be able to avoid many of these transpose/reshape/view.
         query_states = query_states.transpose(1, 2)
         key_states = key_states.transpose(1, 2)
@@ -456,7 +460,7 @@ class OlmoeFlashAttention2(OlmoeAttention):
             is_causal=self.is_causal,
         )
 
-        attn_output = attn_output.reshape(bsz, q_len, self.hidden_size).contiguous()
+        attn_output = attn_output.reshape(bsz, q_len, self.config.hidden_size).contiguous()
         attn_output = self.o_proj(attn_output)
 
         if not output_attentions:
@@ -513,7 +517,7 @@ class OlmoeSdpaAttention(OlmoeAttention):
             key_states.clamp_(min=-self.config.clip_qkv, max=self.config.clip_qkv)
             value_states.clamp_(min=-self.config.clip_qkv, max=self.config.clip_qkv)
 
-        query_states = query_states.view(bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)
+        query_states = query_states.view(bsz, q_len, self.num_attention_heads, self.head_dim).transpose(1, 2)
         key_states = key_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
         value_states = value_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
 
@@ -631,7 +635,7 @@ class OlmoeDecoderLayer(GradientCheckpointingLayer):
         super().__init__()
         self.hidden_size = config.hidden_size
 
-        self.self_attn = OlmoeAttention(config=config, layer_idx=layer_idx)
+        self.self_attn = OlmoeFlashAttention2(config=config, layer_idx=layer_idx)
         self.layer_idx = layer_idx
         self.interventions_config = config.intervention_config
         self.mlp = OlmoeSparseMoeBlock(config)

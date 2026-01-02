@@ -3,3 +3,4 @@ __pycache__
 *.egg-info
 dry_run
 *_run*
+math_sft

@@ -269,8 +269,8 @@ def train_sft_ddp(
             # num_supervised = int((model_inputs["labels"] != -100).sum().item())
             # logger.info(f"{rank=} {step=} {num_supervised=}")
             # with record_function("forward_pass"):
-            # with torch.autocast(device_type="cuda", dtype=torch.float32):
-            outputs = ddp_model(**model_inputs)
+            with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                outputs = ddp_model(**model_inputs)
 
             router_logits = getattr(outputs, "router_logits", None)
 
@@ -479,13 +479,16 @@ def run_main_olmoe(
     response_template = sft_dataset.extract_response_template(tokenizer)
     response_template_ids = tokenizer(response_template)["input_ids"]
     train_dataset = sft_dataset.SFTDataset(
+        # source="meta-math/MetaMathQA",
         source="openai/gsm8k",
         tokenizer=tokenizer,
         response_template_ids=response_template_ids,
         system_key=None,
         system_message="You are a helpful math tutor. Solve step by step.",
+        # user_key="query",
         user_key="question",
         assistant_key="answer",
+        # assistant_key="response",
         split="train",
         name="main",
     )
