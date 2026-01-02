@@ -442,25 +442,24 @@ def run_main_olmoe(
     model_name: str = "allenai/OLMoE-1B-7B-0125",
     tokenizer_model_name: str = "allenai/OLMoE-1B-7B-0125-Instruct",
 ) -> None:
-    train_config, interventions_config_, _ = read_config.load_all_configs(config_path)
+    train_config, interventions_config_, olmoe_config = read_config.load_all_configs(config_path)
 
-    custom_model = modeling_olmoe.OlmoeForCausalLM(
-        configuration_olmoe.OlmoeInterventionsConfig(interventions_config=interventions_config_)
-    )
+    custom_model = modeling_olmoe.OlmoeForCausalLM(olmoe_config)
+
+    intervention_patterns: list[str] = []
+    if not olmoe_config.full_parameter_finetuning:
+        intervention_patterns = interventions_config.INTERVENTION_PATTERNS
 
     report = load_weights.load_hf_into_custom_model(
         hf_model_name_or_path=model_name,
         custom_model=custom_model,
-        intervention_patterns=["*.pre_moe_intervention.*", "*.after_moe_intervention.*"],
+        intervention_patterns=intervention_patterns,
+        full_parameter_finetuning=olmoe_config.full_parameter_finetuning,
         map_dtype=torch.float32,  # optional casting
         map_device=torch.device("cuda"),  # optional device move
         trust_remote_code=False,
     )
     logger.info(f"{report.summary()}")
-
-    for name, param in custom_model.named_parameters():
-        if load_weights.matches_any(name, interventions_config.INTERVENTION_PATTERNS):
-            param.requires_grad = True
 
     # 5) Print parameter stats
     total_params, trainable_params = load_weights._count_parameters(custom_model)
