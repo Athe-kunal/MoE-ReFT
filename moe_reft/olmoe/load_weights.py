@@ -112,6 +112,7 @@ def load_hf_into_custom_model(
     pt_file: str | None = None,
     custom_model: nn.Module,
     intervention_patterns: Sequence[str] | None = None,
+    full_parameter_finetuning: bool = False,
     map_dtype: torch.dtype | None = None,
     map_device: torch.device | None = None,
     trust_remote_code: bool = False,
@@ -167,13 +168,17 @@ def load_hf_into_custom_model(
     if unexpected:
         report.skipped_missing.extend(unexpected)
 
-    # 4) Freeze everything, then unfreeze only intervention layers
-    for param in custom_model.parameters():
-        param.requires_grad = False
-
-    for name, param in custom_model.named_parameters():
-        if matches_any(name, intervention_patterns):
+    # 4) Freeze everything, then unfreeze only intervention layers unless doing full-parameter finetuning
+    if full_parameter_finetuning:
+        for param in custom_model.parameters():
             param.requires_grad = True
+    else:
+        for param in custom_model.parameters():
+            param.requires_grad = False
+
+        for name, param in custom_model.named_parameters():
+            if matches_any(name, intervention_patterns):
+                param.requires_grad = True
 
     # 5) Print parameter stats
     total_params, trainable_params = _count_parameters(custom_model)

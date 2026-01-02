@@ -144,6 +144,7 @@ def load_all_configs(
         output_router_logits=bool(model_section.output_router_logits),
         router_aux_loss_coef=float(model_section.router_aux_loss_coef),
         norm_topk_prob=bool(model_section.norm_topk_prob),
+        full_parameter_finetuning=bool(model_section.get("full_parameter_finetuning", False)),
     )
 
     return train_config, interventions_config_, olmoe_config

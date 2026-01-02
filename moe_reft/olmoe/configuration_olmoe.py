@@ -245,6 +245,7 @@ class OlmoeInterventionsConfig(PretrainedConfig):
         output_router_logits=False,
         router_aux_loss_coef=0.01,
         norm_topk_prob=False,
+        full_parameter_finetuning=False,
         **kwargs,
     ):
         self.vocab_size = vocab_size
@@ -277,6 +278,7 @@ class OlmoeInterventionsConfig(PretrainedConfig):
         self.output_router_logits = output_router_logits
         self.router_aux_loss_coef = router_aux_loss_coef
         self.norm_topk_prob = norm_topk_prob
+        self.full_parameter_finetuning = full_parameter_finetuning
         # Validate the correctness of rotary position embeddings parameters
         # BC: if there is a 'type' field, move it to 'rope_type'.
         rope_scaling = kwargs.pop("rope_scaling", None)

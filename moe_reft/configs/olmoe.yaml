@@ -49,6 +49,7 @@ model:
   output_router_logits: false
   router_aux_loss_coef: 0.01
   norm_topk_prob: false
+  full_parameter_finetuning: false
 
   # Optional RoPE parameters (can be null or omitted)
   rope_parameters:
