@@ -269,8 +269,8 @@ def train_sft_ddp(
             # num_supervised = int((model_inputs["labels"] != -100).sum().item())
             # logger.info(f"{rank=} {step=} {num_supervised=}")
             # with record_function("forward_pass"):
-            with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                outputs = ddp_model(**model_inputs)
+            # with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+            outputs = ddp_model(**model_inputs)
 
             router_logits = getattr(outputs, "router_logits", None)
 
@@ -367,7 +367,7 @@ def train_sft_ddp(
                 if "labels" not in model_inputs:
                     model_inputs["labels"] = labels
 
-                # with torch.autocast(device_type="cuda", dtype=torch.float32):
+                # with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                 outputs = ddp_model(**model_inputs)
 
                 if hasattr(outputs, "loss") and outputs.loss is not None:
@@ -462,7 +462,7 @@ def run_main_olmoe(
     logger.info(f"{report.summary()}")
 
     # 5) Print parameter stats
-    total_params, trainable_params = load_weights._count_parameters(custom_model)
+    total_params, trainable_params = load_weights.count_parameters(custom_model)
     print(f"Total parameters:     {total_params}")
     print(f"Trainable parameters: {trainable_params}")
 

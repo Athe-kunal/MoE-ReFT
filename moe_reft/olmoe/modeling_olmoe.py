@@ -517,9 +517,13 @@ class OlmoeSdpaAttention(OlmoeAttention):
             key_states.clamp_(min=-self.config.clip_qkv, max=self.config.clip_qkv)
             value_states.clamp_(min=-self.config.clip_qkv, max=self.config.clip_qkv)
 
-        query_states = query_states.view(bsz, q_len, self.num_attention_heads, self.head_dim).transpose(1, 2)
-        key_states = key_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
-        value_states = value_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
+        query_states = query_states.view(bsz, q_len, self.config.num_attention_heads, self.head_dim).transpose(
+            1, 2
+        )
+        key_states = key_states.view(bsz, q_len, self.config.num_key_value_heads, self.head_dim).transpose(1, 2)
+        value_states = value_states.view(bsz, q_len, self.config.num_key_value_heads, self.head_dim).transpose(
+            1, 2
+        )
 
         cos, sin = position_embeddings
         query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
@@ -560,7 +564,7 @@ class OlmoeSdpaAttention(OlmoeAttention):
         )
 
         attn_output = attn_output.transpose(1, 2).contiguous()
-        attn_output = attn_output.view(bsz, q_len, self.hidden_size)
+        attn_output = attn_output.view(bsz, q_len, self.config.hidden_size)
 
         attn_output = self.o_proj(attn_output)
 
@@ -635,7 +639,8 @@ class OlmoeDecoderLayer(GradientCheckpointingLayer):
         super().__init__()
         self.hidden_size = config.hidden_size
 
-        self.self_attn = OlmoeFlashAttention2(config=config, layer_idx=layer_idx)
+        # self.self_attn = OlmoeFlashAttention2(config=config, layer_idx=layer_idx)
+        self.self_attn = OlmoeSdpaAttention(config=config, layer_idx=layer_idx)
         self.layer_idx = layer_idx
         self.interventions_config = config.intervention_config
         self.mlp = OlmoeSparseMoeBlock(config)

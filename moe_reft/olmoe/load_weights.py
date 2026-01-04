@@ -95,7 +95,7 @@ def build_partial_state_dict(
     return out, report
 
 
-def _count_parameters(model: nn.Module) -> tuple[int, int]:
+def count_parameters(model: nn.Module) -> tuple[int, int]:
     total_params: int = 0
     trainable_params: int = 0
     for p in model.parameters():
@@ -181,7 +181,7 @@ def load_hf_into_custom_model(
                 param.requires_grad = True
 
     # 5) Print parameter stats
-    total_params, trainable_params = _count_parameters(custom_model)
+    total_params, trainable_params = count_parameters(custom_model)
     print(f"Total parameters:     {total_params}")
     print(f"Trainable parameters: {trainable_params}")
 
