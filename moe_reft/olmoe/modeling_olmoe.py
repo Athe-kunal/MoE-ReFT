@@ -640,7 +640,7 @@ class OlmoeDecoderLayer(GradientCheckpointingLayer):
         self.hidden_size = config.hidden_size
 
         # self.self_attn = OlmoeFlashAttention2(config=config, layer_idx=layer_idx)
-        self.self_attn = OlmoeSdpaAttention(config=config, layer_idx=layer_idx)
+        self.self_attn = OlmoeAttention(config=config, layer_idx=layer_idx)
         self.layer_idx = layer_idx
         self.interventions_config = config.intervention_config
         self.mlp = OlmoeSparseMoeBlock(config)

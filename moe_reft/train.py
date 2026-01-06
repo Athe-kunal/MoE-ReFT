@@ -27,6 +27,7 @@ from torch.utils.data.distributed import DistributedSampler
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 
 from moe_reft import interventions_config, tiny_sft, read_config, datamodels, sft_dataset
+from moe_reft.olmoe.load_weights import matches_any
 from moe_reft.olmoe import modeling_olmoe, configuration_olmoe, load_weights
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
@@ -50,6 +51,19 @@ def _manual_shifted_ce_loss(
     shift_labels = labels[:, 1:].contiguous()
     loss_fct = nn.CrossEntropyLoss(ignore_index=-100)
     return loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
+
+
+def get_intervention_state_dict(
+    model: nn.Module,
+    patterns: list[str] | None = None,
+) -> dict[str, torch.Tensor]:
+    """Extract only the intervention module weights from model state dict."""
+    if patterns is None:
+        patterns = interventions_config.INTERVENTION_PATTERNS
+
+    full_sd = model.state_dict()
+    intervention_sd = {name: tensor for name, tensor in full_sd.items() if matches_any(name, patterns)}
+    return intervention_sd
 
 
 def build_optimizer_from_requires_grad(
@@ -135,6 +149,7 @@ def train_sft_ddp(
     val_dataset: sft_dataset.SFTDataset,
     train_config: datamodels.TrainConfig,
     config_path: str,
+    full_parameter_finetuning: bool = False,
 ) -> None:
     setup()
 
@@ -409,15 +424,27 @@ def train_sft_ddp(
             logger.info(f"Completed epoch {epoch}")
 
             last_ckpt_path = os.path.join(train_config.save_dir, f"checkpoint-epoch{epoch}.pt")
+
+            # For intervention training, save only intervention weights (much smaller)
+            # For full parameter finetuning, save the entire model state dict
+            if full_parameter_finetuning:
+                model_state_to_save = ddp_model.module.state_dict()
+            else:
+                model_state_to_save = get_intervention_state_dict(ddp_model.module)
+                logger.info(f"Saving intervention-only checkpoint with {len(model_state_to_save)} parameters")
+            with open(config_path, "r") as f:
+                config_yaml = f.read()
             torch.save(
                 {
                     "epoch": epoch,
                     "global_step": global_step,
                     "val_loss": global_val_loss,
-                    "model_state_dict": ddp_model.module.state_dict(),
+                    "model_state_dict": model_state_to_save,
                     "optimizer_state_dict": optimizer.state_dict(),
                     "scheduler_state_dict": scheduler.state_dict(),
                     "train_config": getattr(train_config, "__dict__", None),
+                    "full_parameter_finetuning": full_parameter_finetuning,
+                    "config_yaml": config_yaml,
                 },
                 last_ckpt_path,
             )
@@ -508,6 +535,7 @@ def run_main_olmoe(
         val_dataset=val_dataset,
         train_config=train_config,
         config_path=config_path,
+        full_parameter_finetuning=olmoe_config.full_parameter_finetuning,
     )
 
 
