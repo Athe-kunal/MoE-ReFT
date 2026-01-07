@@ -1,6 +1,6 @@
 import re
 import random
-from typing import Any, Callable, Mapping, Optional, Protocol, Mapping, cast
+from typing import Any, Callable, Mapping, TypedDict, Optional, Protocol, cast
 from loguru import logger
 from datasets import load_dataset
 import torch
@@ -30,6 +30,70 @@ def extract_response_template(tokenizer: PreTrainedTokenizerBase) -> str | None:
 
 class Transform(Protocol):
     def __call__(self, sample: Mapping[str, Any]) -> Mapping[str, Any]: ...
+
+
+class Messages(TypedDict):
+    """Container for extracted chat messages from a sample."""
+
+    system: str
+    user: str
+    assistant: str
+
+
+class MessageExtractor(Protocol):
+    """Protocol for extracting system, user, and assistant messages from a dataset sample."""
+
+    def __call__(self, sample: Mapping[str, Any]) -> Messages:
+        """
+        Extract messages from a raw dataset sample.
+
+        Args:
+            sample: A single sample from the dataset (e.g., a dict with dataset-specific keys).
+
+        Returns:
+            Messages containing the system, user, and assistant messages.
+        """
+        ...
+
+
+@dataclasses.dataclass
+class KeyBasedMessageExtractor:
+    """
+    Default message extractor that uses simple key lookups.
+
+    This handles the common case where system, user, and assistant messages
+    are stored under specific keys in the dataset sample.
+    """
+
+    user_key: str
+    assistant_key: str
+    system_key: str | None = None
+    system_message: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.system_key and self.system_message:
+            raise ValueError(
+                f"Can't set both `system_message` and `system_key`, "
+                f"but they are set {self.system_key=} and {self.system_message=}"
+            )
+        if not self.system_key and not self.system_message:
+            raise ValueError("Must provide either `system_key` or `system_message`")
+
+    def __call__(self, sample: Mapping[str, Any]) -> Messages:
+        user_message = sample[self.user_key]
+        assistant_message = sample[self.assistant_key]
+
+        if self.system_message:
+            system_message = self.system_message
+        else:
+            assert self.system_key is not None
+            system_message = sample[self.system_key]
+
+        return Messages(
+            system=system_message,
+            user=user_message,
+            assistant=assistant_message,
+        )
 
 
 @dataclasses.dataclass
@@ -85,10 +149,7 @@ class SFTDataset(Dataset):
         source: str,
         tokenizer: PreTrainedTokenizerBase,
         response_template_ids: list[int],
-        system_key: str | None,
-        user_key: str,
-        assistant_key: str,
-        system_message: str | None,
+        message_extractor: MessageExtractor,
         filter_fn: Optional[Callable] = None,
         filter_kwargs: Optional[dict[str, Any]] = None,
         **load_dataset_kwargs: dict[str, Any],
@@ -103,10 +164,7 @@ class SFTDataset(Dataset):
         self._prepare_sample = SFTTransform(
             tokenizer=self.tokenizer,
             response_template_ids=self.response_template_ids,
-            system_message=system_message,
-            system_key=system_key,
-            user_key=user_key,
-            assistant_key=assistant_key,
+            message_extractor=message_extractor,
         )
         validate_data_kwargs = load_dataset_kwargs.copy()
         validate_data_kwargs.pop("split", None)
@@ -170,40 +228,25 @@ class SFTTransform(Transform):
         self,
         tokenizer: PreTrainedTokenizerBase,
         response_template_ids: torch.Tensor,
-        system_key: str | None,
-        user_key: str,
-        assistant_key: str,
-        system_message: str | None,
+        message_extractor: MessageExtractor,
         max_seq_len: int = 4096,
     ):
         self.tokenizer = tokenizer
-        if system_key and system_message:
-            raise ValueError(
-                f"Can't set both `system_message` and `system_key`, but they are set {system_key=} and {system_message=}"
-            )
-        self.system_key = system_key
-        self.system_message = system_message
-        self.user_key = user_key
-        self.assistant_key = assistant_key
+        self.message_extractor = message_extractor
         self.response_template_ids = response_template_ids
         self.max_seq_len = max_seq_len
 
     def __call__(self, sample: Mapping[str, Any]) -> dict[str, Any]:
-        user_message = sample[self.user_key]
-        if self.system_message:
-            system_message = self.system_message
-        else:
-            system_message = sample[self.system_key]
-        assistant_message = sample[self.assistant_key]
+        extracted = self.message_extractor(sample)
 
-        assert system_message
-        assert user_message
-        assert assistant_message
+        assert extracted.system, "System message cannot be empty"
+        assert extracted.user, "User message cannot be empty"
+        assert extracted.assistant, "Assistant message cannot be empty"
 
         messages = [
-            {"role": "system", "content": system_message},
-            {"role": "user", "content": user_message},
-            {"role": "assistant", "content": assistant_message},
+            {"role": "system", "content": extracted.system},
+            {"role": "user", "content": extracted.user},
+            {"role": "assistant", "content": extracted.assistant},
         ]
         tokenized_dict = self.tokenizer.apply_chat_template(
             messages,
@@ -237,14 +280,19 @@ if __name__ == "__main__":
         f"For the {tokenizer.name_or_path=} automatically assigned the response template to {response_template}"
     )
     response_template_ids = tokenizer(response_template)["input_ids"]
+
+    # Create a message extractor for GSM8K dataset
+    message_extractor = KeyBasedMessageExtractor(
+        user_key="question",
+        assistant_key="answer",
+        system_message="You are a helpful math tutor. Solve step by step.",
+    )
+
     ds = SFTDataset(
         source="openai/gsm8k",
         tokenizer=tokenizer,
         response_template_ids=response_template_ids,
-        system_key=None,
-        system_message="You are a helpful math tutor. Solve step by step.",
-        user_key="question",
-        assistant_key="answer",
+        message_extractor=message_extractor,
         split="train",
         name="main",
     )

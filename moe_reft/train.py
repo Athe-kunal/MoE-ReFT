@@ -504,17 +504,20 @@ def run_main_olmoe(
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_model_name)
     response_template = sft_dataset.extract_response_template(tokenizer)
     response_template_ids = tokenizer(response_template)["input_ids"]
+
+    # Create message extractor for GSM8K dataset
+    message_extractor = sft_dataset.KeyBasedMessageExtractor(
+        user_key="question",
+        assistant_key="answer",
+        system_message="You are a helpful math tutor. Solve step by step.",
+    )
+
     train_dataset = sft_dataset.SFTDataset(
         # source="meta-math/MetaMathQA",
         source="openai/gsm8k",
         tokenizer=tokenizer,
         response_template_ids=response_template_ids,
-        system_key=None,
-        system_message="You are a helpful math tutor. Solve step by step.",
-        # user_key="query",
-        user_key="question",
-        assistant_key="answer",
-        # assistant_key="response",
+        message_extractor=message_extractor,
         split="train",
         name="main",
     )
@@ -522,10 +525,7 @@ def run_main_olmoe(
         source="openai/gsm8k",
         tokenizer=tokenizer,
         response_template_ids=response_template_ids,
-        system_key=None,
-        system_message="You are a helpful math tutor. Solve step by step.",
-        user_key="question",
-        assistant_key="answer",
+        message_extractor=message_extractor,
         split="test",
         name="main",
     )
