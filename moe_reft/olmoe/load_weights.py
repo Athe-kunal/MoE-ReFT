@@ -8,6 +8,8 @@ import torch
 from loguru import logger
 from torch import nn
 from transformers import AutoModelForCausalLM, PreTrainedModel
+from moe_reft.olmoe import configuration_olmoe, modeling_olmoe
+from moe_reft import interventions_config as ic
 
 
 @dataclass
@@ -116,7 +118,7 @@ def load_hf_into_custom_model(
     map_dtype: torch.dtype | None = None,
     map_device: torch.device | None = None,
     trust_remote_code: bool = False,
-) -> TransferReport:
+) -> tuple[TransferReport, nn.Module]:
     """
     Load either a HF Causal LM (by name/path) or a torch.pt file, copy overlapping weights into `custom_model`,
     skipping intervention modules, then freeze all parameters except those
@@ -187,7 +189,7 @@ def load_hf_into_custom_model(
 
     logger.info(f"Parameter stats — total: {total_params}, trainable: {trainable_params}")
 
-    return report
+    return report, custom_model
 
 
 def load_pretrained_with_interventions_from_checkpoint(
@@ -227,8 +229,6 @@ def load_pretrained_with_interventions_from_checkpoint(
         A tuple of (model, TransferReport) where model is the initialized OlmoeForCausalLM
         with loaded weights, and TransferReport contains details about the weight transfer.
     """
-    from moe_reft.olmoe import configuration_olmoe, modeling_olmoe
-    from moe_reft import interventions_config as ic
 
     if intervention_patterns is None:
         intervention_patterns = ic.INTERVENTION_PATTERNS

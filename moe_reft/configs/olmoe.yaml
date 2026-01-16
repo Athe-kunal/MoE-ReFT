@@ -1,6 +1,6 @@
 train:
-  save_dir: "math_sft/"
-  epochs: 3
+  save_dir: "math_gsm8k/"
+  epochs: 1
   learning_rate: 5.0e-4
   grad_accum_steps: 8
   max_grad_norm: null

@@ -647,7 +647,7 @@ class OlmoeDecoderLayer(GradientCheckpointingLayer):
         self.input_layernorm = OlmoeRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.post_attention_layernorm = OlmoeRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
-        if config.full_parameter_finetuning:
+        if config.full_parameter_finetuning or config.intervention_config is None:
             self.pre_moe_intervention = nn.Identity()
             self.after_moe_intervention = nn.Identity()
         else:

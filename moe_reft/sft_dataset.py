@@ -1,6 +1,6 @@
 import re
 import random
-from typing import Any, Callable, Mapping, TypedDict, Optional, Protocol, cast
+from typing import Any, Callable, Mapping, NamedTuple, Optional, Protocol, cast
 from loguru import logger
 from datasets import load_dataset
 import torch
@@ -32,7 +32,7 @@ class Transform(Protocol):
     def __call__(self, sample: Mapping[str, Any]) -> Mapping[str, Any]: ...
 
 
-class Messages(TypedDict):
+class Messages(NamedTuple):
     """Container for extracted chat messages from a sample."""
 
     system: str

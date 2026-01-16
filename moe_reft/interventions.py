@@ -48,25 +48,54 @@ class LoreftIntervention(SourcelessIntervention, TrainableIntervention, Distribu
         )
         return self.dropout(output)
 
-    def state_dict(self, *args, **kwargs):
+    def state_dict(self, destination=None, prefix="", keep_vars=False):
         """
         Overwrite for data-efficiency.
+        Properly integrates with PyTorch's hierarchical state_dict mechanism.
         """
-        state_dict = OrderedDict()
-        for k, v in self.learned_source.state_dict().items():
-            state_dict[k] = v
-        state_dict["rotate_layer"] = self.rotate_layer.weight.data
-        return state_dict
+        if destination is None:
+            destination = OrderedDict()
 
-    def load_state_dict(self, state_dict, *args, **kwargs):
+        # Add learned_source parameters with proper prefix
+        for k, v in self.learned_source.state_dict(keep_vars=keep_vars).items():
+            destination[prefix + "learned_source." + k] = v
+
+        # Add rotate_layer weight
+        if keep_vars:
+            destination[prefix + "rotate_layer"] = self.rotate_layer.weight
+        else:
+            destination[prefix + "rotate_layer"] = self.rotate_layer.weight.data
+
+        return destination
+
+    def load_state_dict(self, state_dict, strict=True, assign=False):
         """
         Overwrite for data-efficiency.
+        Handles both new format (learned_source.weight) and old format (weight) for backward compatibility.
         """
-        self.learned_source.load_state_dict(state_dict, strict=False)
+        # Build learned_source state dict - handle both old and new key formats
+        learned_source_sd = {}
+        for k, v in state_dict.items():
+            if k.startswith("learned_source."):
+                # New format: learned_source.weight -> weight
+                learned_source_sd[k[len("learned_source.") :]] = v
+            elif k in ("weight", "bias"):
+                # Old format: direct keys
+                learned_source_sd[k] = v
+
+        if learned_source_sd:
+            self.learned_source.load_state_dict(learned_source_sd, strict=False)
+
+        # Load rotate_layer weight
+        rotate_layer_key = "rotate_layer"
+        if rotate_layer_key not in state_dict:
+            if strict:
+                raise KeyError(f"Missing key: {rotate_layer_key}")
+            return
 
         # Caveat: without creating a new layer, it might not work (still not sure why)
         # We have to recreate a layer, and load back the columns.
-        overload_w = state_dict["rotate_layer"].to(self.learned_source.weight.device)
+        overload_w = state_dict[rotate_layer_key].to(self.learned_source.weight.device)
         overload_w_width = overload_w.shape[-1]
         rotate_layer = LowRankRotateLayer(self.embed_dim, overload_w_width, init_orth=True).to(
             self.learned_source.weight.device
@@ -74,8 +103,6 @@ class LoreftIntervention(SourcelessIntervention, TrainableIntervention, Distribu
         self.rotate_layer = torch.nn.utils.parametrizations.orthogonal(rotate_layer)
         self.rotate_layer.parametrizations.weight[0].base[:, :overload_w_width] = overload_w
         assert torch.allclose(self.rotate_layer.weight.data, overload_w.data) == True  # we must match!
-
-        return
 
 
 class NoreftIntervention(SourcelessIntervention, TrainableIntervention, DistributedRepresentationIntervention):

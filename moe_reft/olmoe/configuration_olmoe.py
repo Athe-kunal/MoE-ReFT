@@ -10,7 +10,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """OLMoE model configuration"""
-from moe_reft import interventions_config
+from moe_reft import interventions_config as interventions_config_params
 from transformers.configuration_utils import PretrainedConfig
 from transformers.modeling_rope_utils import (
     rope_config_validation,
@@ -218,7 +218,7 @@ class OlmoeInterventionsConfig(PretrainedConfig):
 
     def __init__(
         self,
-        interventions_config: interventions_config.InterventionsConfig,
+        interventions_config: interventions_config_params.InterventionsConfig | dict | None = None,
         vocab_size=50304,
         hidden_size=2048,
         intermediate_size=1024,
@@ -256,7 +256,9 @@ class OlmoeInterventionsConfig(PretrainedConfig):
         self.num_attention_heads = num_attention_heads
         self.rope_parameters = rope_parameters
 
-        # Intervention parameters
+        # Intervention parameters (optional for HF default config creation)
+        if isinstance(interventions_config, dict):
+            interventions_config = interventions_config_params.InterventionsConfig(**interventions_config)
         self.intervention_config = interventions_config
 
         # for backward compatibility
@@ -305,7 +307,7 @@ class OlmoeInterventionsConfig(PretrainedConfig):
         output = super().to_dict()
 
         interv = getattr(self, "intervention_config", None)
-        if isinstance(interv, interventions_config.InterventionsConfig):
+        if isinstance(interv, interventions_config_params.InterventionsConfig):
             output["intervention_config"] = interv.model_dump()
         else:
             # already a dict or None
@@ -320,7 +322,7 @@ class OlmoeInterventionsConfig(PretrainedConfig):
         """
         interv_raw = config_dict.get("intervention_config", None)
         if isinstance(interv_raw, dict):
-            config_dict["intervention_config"] = interventions_config.InterventionsConfig(**interv_raw)
+            config_dict["intervention_config"] = interventions_config_params.InterventionsConfig(**interv_raw)
         return super().from_dict(config_dict, **kwargs)
 
 

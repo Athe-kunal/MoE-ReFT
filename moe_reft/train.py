@@ -62,7 +62,9 @@ def get_intervention_state_dict(
         patterns = interventions_config.INTERVENTION_PATTERNS
 
     full_sd = model.state_dict()
+    # print(full_sd.keys())
     intervention_sd = {name: tensor for name, tensor in full_sd.items() if matches_any(name, patterns)}
+    logger.debug(f"Intervention state dict includes these module names: {list(intervention_sd.keys())}")
     return intervention_sd
 
 
@@ -225,6 +227,9 @@ def train_sft_ddp(
 
     total_params = sum(p.numel() for p in ddp_model.module.parameters())
     trainable_params = sum(p.numel() for p in ddp_model.module.parameters() if p.requires_grad)
+    # Print layer names with requires_grad = True
+    trainable_layers = [name for name, p in ddp_model.module.named_parameters() if p.requires_grad]
+    logger.info(f"Layers with requires_grad=True: {trainable_layers}")
 
     writer: SummaryWriter | None = None
     wandb_run: Any = None
@@ -477,7 +482,7 @@ def run_main_olmoe(
     if not olmoe_config.full_parameter_finetuning:
         intervention_patterns = interventions_config.INTERVENTION_PATTERNS
 
-    report = load_weights.load_hf_into_custom_model(
+    report, custom_model = load_weights.load_hf_into_custom_model(
         hf_model_name_or_path=model_name,
         custom_model=custom_model,
         intervention_patterns=intervention_patterns,
@@ -500,7 +505,13 @@ def run_main_olmoe(
     )
     # dataloader, _, dataset = tiny_sft.build_tiny_sft_dataloader(model_name=tokenizer_model_name)
     # train_sft(model=custom_model, dataloader=dataloader, train_config=train_config)
-    # train_sft_ddp(model=custom_model, train_dataset=dataset, val_dataset=dataset, train_config=train_config)
+    # train_sft_ddp(
+    #     config_path=config_path,
+    #     model=custom_model,
+    #     train_dataset=dataset,
+    #     val_dataset=dataset,
+    #     train_config=train_config,
+    # )
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_model_name)
     response_template = sft_dataset.extract_response_template(tokenizer)
     response_template_ids = tokenizer(response_template)["input_ids"]
