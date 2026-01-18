@@ -43,7 +43,25 @@ Results in `analysis_results/`:
 - All 64 experts remain active in both models
 - Interventions shift expert routing patterns but don't disable experts
 - This was a failed experiment with the test loss actually increase on the test set and same experts are getting activated for both base and interventions finetuned model
+- Even with `after_moe` interventions didn't work and lead to much degradation in performance.
 
+```
+============================================================
+ANALYSIS SUMMARY
+============================================================
+
+Test Loss Comparison:
+  Base Model:          0.8117
+  + Interventions:     11.4709
+  Improvement:         -10.6592 (-1313.21%)
+
+Active Experts:
+  Base Model:          64 / 64
+  + Interventions:     64 / 64
+
+Results saved to: analysis_results_after_moe
+============================================================
+```
 ## Structure
 
 ```
