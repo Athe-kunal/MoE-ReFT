@@ -9,11 +9,22 @@ InterventionType = Literal["LoreftIntervention", "DireftIntervention"]
 INTERVENTION_PATTERNS = [
     "*.pre_moe_intervention.*",
     "*.after_moe_intervention.*",
+    "*.lora_A.*",
+    "*.lora_B.*",
+    "*.lora_magnitude",
 ]
 
 
 class InterventionsConfig(pydantic.BaseModel):
     """Configuration settings controlling REFT / DIREFT interventions applied to MoE layers."""
+
+    enabled: Annotated[
+        bool,
+        pydantic.Field(
+            default=True,
+            description="Enable or disable intervention modules. When false, interventions are skipped.",
+        ),
+    ]
 
     intervention_type: Annotated[
         Literal["LoreftIntervention", "DireftIntervention"],

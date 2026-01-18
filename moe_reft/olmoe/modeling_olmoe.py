@@ -16,6 +16,8 @@ from typing import Optional, Union, Callable
 
 import torch
 from torch import nn
+from torch.nn import functional as F
+import math
 
 from transformers.activations import ACT2FN
 from transformers.cache_utils import Cache, DynamicCache
@@ -49,6 +51,81 @@ if is_flash_attn_available():
 
 
 logger = logging.get_logger(__name__)
+
+
+class LoraLinear(nn.Module):
+    def __init__(
+        self,
+        base_layer: nn.Linear,
+        *,
+        r: int,
+        lora_alpha: float,
+        lora_dropout: float,
+        use_dora: bool,
+    ):
+        super().__init__()
+        self.base_layer = base_layer
+        self.r = r
+        self.use_dora = use_dora
+        self.lora_alpha = lora_alpha
+        self.scaling = lora_alpha / r if r > 0 else 1.0
+        self.lora_dropout = nn.Dropout(lora_dropout)
+
+        if r > 0:
+            self.lora_A = nn.Linear(base_layer.in_features, r, bias=False)
+            self.lora_B = nn.Linear(r, base_layer.out_features, bias=False)
+            nn.init.kaiming_uniform_(self.lora_A.weight, a=math.sqrt(5))
+            nn.init.zeros_(self.lora_B.weight)
+        else:
+            self.lora_A = None
+            self.lora_B = None
+
+        if self.use_dora:
+            self.lora_magnitude = nn.Parameter(torch.ones(base_layer.out_features))
+        else:
+            self.lora_magnitude = None
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.r <= 0 or self.lora_A is None or self.lora_B is None:
+            return self.base_layer(x)
+
+        if not self.use_dora:
+            lora_out = self.lora_B(self.lora_A(self.lora_dropout(x))) * self.scaling
+            return self.base_layer(x) + lora_out
+
+        lora_weight = (self.lora_B.weight @ self.lora_A.weight) * self.scaling
+        combined = self.base_layer.weight + lora_weight
+        weight_norm = torch.norm(combined, dim=1, keepdim=True).clamp_min(1e-6)
+        magnitude = self.lora_magnitude.unsqueeze(1)
+        dora_weight = combined * (magnitude / weight_norm)
+        return F.linear(x, dora_weight, self.base_layer.bias)
+
+
+def _should_apply_lora(config: configuration_olmoe.OlmoeInterventionsConfig, module_name: str) -> bool:
+    if not getattr(config, "lora_enabled", False):
+        return False
+    if getattr(config, "lora_rank", 0) <= 0:
+        return False
+    targets = set(getattr(config, "lora_target_modules", []) or [])
+    if not targets:
+        return False
+    return module_name in targets
+
+
+def _maybe_wrap_lora(
+    config: configuration_olmoe.OlmoeInterventionsConfig,
+    module_name: str,
+    linear_layer: nn.Linear,
+) -> nn.Module:
+    if not _should_apply_lora(config, module_name):
+        return linear_layer
+    return LoraLinear(
+        linear_layer,
+        r=config.lora_rank,
+        lora_alpha=config.lora_alpha,
+        lora_dropout=config.lora_dropout,
+        use_dora=config.lora_use_dora,
+    )
 
 
 class OlmoeRMSNorm(nn.Module):
@@ -142,9 +219,21 @@ class OlmoeMLP(nn.Module):
         self.config = config
         self.hidden_size = config.hidden_size
         self.intermediate_size = config.intermediate_size
-        self.gate_proj = nn.Linear(self.hidden_size, self.intermediate_size, bias=False)
-        self.up_proj = nn.Linear(self.hidden_size, self.intermediate_size, bias=False)
-        self.down_proj = nn.Linear(self.intermediate_size, self.hidden_size, bias=False)
+        self.gate_proj = _maybe_wrap_lora(
+            config,
+            "gate_proj",
+            nn.Linear(self.hidden_size, self.intermediate_size, bias=False),
+        )
+        self.up_proj = _maybe_wrap_lora(
+            config,
+            "up_proj",
+            nn.Linear(self.hidden_size, self.intermediate_size, bias=False),
+        )
+        self.down_proj = _maybe_wrap_lora(
+            config,
+            "down_proj",
+            nn.Linear(self.intermediate_size, self.hidden_size, bias=False),
+        )
         self.act_fn = ACT2FN[config.hidden_act]
 
     def forward(self, x):
@@ -240,17 +329,25 @@ class OlmoeAttention(nn.Module):
         self.attention_dropout = config.attention_dropout
         self.is_causal = True
 
-        self.q_proj = nn.Linear(
-            config.hidden_size, config.num_attention_heads * self.head_dim, bias=config.attention_bias
+        self.q_proj = _maybe_wrap_lora(
+            config,
+            "q_proj",
+            nn.Linear(config.hidden_size, config.num_attention_heads * self.head_dim, bias=config.attention_bias),
         )
-        self.k_proj = nn.Linear(
-            config.hidden_size, config.num_key_value_heads * self.head_dim, bias=config.attention_bias
+        self.k_proj = _maybe_wrap_lora(
+            config,
+            "k_proj",
+            nn.Linear(config.hidden_size, config.num_key_value_heads * self.head_dim, bias=config.attention_bias),
         )
-        self.v_proj = nn.Linear(
-            config.hidden_size, config.num_key_value_heads * self.head_dim, bias=config.attention_bias
+        self.v_proj = _maybe_wrap_lora(
+            config,
+            "v_proj",
+            nn.Linear(config.hidden_size, config.num_key_value_heads * self.head_dim, bias=config.attention_bias),
         )
-        self.o_proj = nn.Linear(
-            config.num_attention_heads * self.head_dim, config.hidden_size, bias=config.attention_bias
+        self.o_proj = _maybe_wrap_lora(
+            config,
+            "o_proj",
+            nn.Linear(config.num_attention_heads * self.head_dim, config.hidden_size, bias=config.attention_bias),
         )
         self.q_norm = OlmoeRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.k_norm = OlmoeRMSNorm(
@@ -614,6 +711,8 @@ def build_intervention(
     place: interventions_config.InterventionPlace,
 ) -> nn.Module:
     """Create the requested intervention or Identity if not applicable."""
+    if not icfg.enabled:
+        return nn.Identity()
     if place not in icfg.intervention_places or not _interventions_based_layer_idx(icfg, layer_idx):
         return nn.Identity()
 

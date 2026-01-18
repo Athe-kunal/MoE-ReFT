@@ -45,6 +45,7 @@ def build_olmoe_config(
     inter_section = cfg.interventions
 
     interventions_config_ = interventions_config.InterventionsConfig(
+        enabled=bool(inter_section.get("enabled", True)),
         intervention_type=inter_section.intervention_type,
         intervention_layers=inter_section.intervention_layers,
         intervention_places=inter_section.intervention_places,
@@ -121,6 +122,16 @@ def build_olmoe_config(
         router_aux_loss_coef=float(model_section.router_aux_loss_coef),
         norm_topk_prob=bool(model_section.norm_topk_prob),
         full_parameter_finetuning=bool(model_section.get("full_parameter_finetuning", False)),
+        lora_enabled=bool(model_section.get("lora_enabled", False)),
+        lora_rank=int(model_section.get("lora_rank", 0)),
+        lora_alpha=float(model_section.get("lora_alpha", 1.0)),
+        lora_dropout=float(model_section.get("lora_dropout", 0.0)),
+        lora_target_modules=(
+            None
+            if model_section.get("lora_target_modules", None) is None
+            else list(model_section.get("lora_target_modules"))
+        ),
+        lora_use_dora=bool(model_section.get("lora_use_dora", False)),
     )
 
     return olmoe_config
