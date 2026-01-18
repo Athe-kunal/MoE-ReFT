@@ -9,7 +9,7 @@ from loguru import logger
 from torch import nn
 from transformers import AutoModelForCausalLM, PreTrainedModel
 from moe_reft.olmoe import configuration_olmoe, modeling_olmoe
-from moe_reft import interventions_config as ic
+from moe_reft import interventions_config as ic, read_config
 
 
 @dataclass
@@ -242,7 +242,11 @@ def load_pretrained_with_interventions_from_checkpoint(
         pt_state_dict = checkpoint
 
     # 2) Extract or create intervention config from checkpoint
-    if isinstance(checkpoint, dict) and "config" in checkpoint:
+    if isinstance(checkpoint, dict) and "config_yaml" in checkpoint:
+        # Parse the YAML string and build config using read_config utilities
+        model_config = read_config.load_olmoe_config_from_yaml_string(checkpoint["config_yaml"])
+        logger.info("Loaded config from checkpoint's config_yaml")
+    elif isinstance(checkpoint, dict) and "config" in checkpoint:
         config = checkpoint["config"]
         if isinstance(config, configuration_olmoe.OlmoeInterventionsConfig):
             model_config = config

@@ -1,5 +1,5 @@
 train:
-  save_dir: "math_gsm8k/"
+  save_dir: "math_gsm8k_256/"
   epochs: 1
   learning_rate: 5.0e-4
   grad_accum_steps: 8
@@ -17,7 +17,7 @@ interventions:
   intervention_type: "LoreftIntervention" # or "DireftIntervention"
   intervention_layers: "all" # "all" | "odd_only" | "even_only" | "alternate"
   intervention_places: "pre_moe" # "pre_moe" | "after_moe"
-  low_rank_dimension: 128
+  low_rank_dimension: 256
   dropout: 0.0
   act_fn: gelu # "gelu", "relu", or null/linear
   init_orth: true

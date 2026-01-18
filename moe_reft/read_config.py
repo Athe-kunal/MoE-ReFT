@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from typing import Optional, Tuple
+from typing import Optional, Tuple, cast
 import torch
-from omegaconf import OmegaConf
+from omegaconf import OmegaConf, DictConfig
 
 from moe_reft.datamodels import TrainConfig
 from moe_reft import interventions_config
@@ -27,43 +27,18 @@ def _dtype_from_str(dtype_str: str) -> torch.dtype:
     return mapping[dtype_str]
 
 
-def load_all_configs(
-    yaml_path: str,
-) -> Tuple[TrainConfig, interventions_config.InterventionsConfig, configuration_olmoe.OlmoeInterventionsConfig]:
+def build_olmoe_config(
+    cfg: DictConfig,
+) -> configuration_olmoe.OlmoeInterventionsConfig:
     """
-    Load TrainConfig, InterventionsConfig, and OlmoeInterventionsConfig
-    from a single nested YAML file using OmegaConf.
+    Build OlmoeInterventionsConfig from a parsed OmegaConf config object.
+    
+    Args:
+        cfg: Parsed OmegaConf config with 'interventions' and 'model' sections.
+    
+    Returns:
+        OlmoeInterventionsConfig instance.
     """
-    cfg = OmegaConf.load(yaml_path)
-    # ------------------------
-    # Train config
-    # ------------------------
-    train_section = cfg.train
-
-    amp_dtype: torch.dtype = _dtype_from_str(train_section.amp_dtype)
-
-    device_obj: Optional[torch.device]
-    if train_section.device is None:
-        device_obj = None
-    else:
-        device_obj = torch.device(str(train_section.device))
-
-    train_config = TrainConfig(
-        save_dir=str(train_section.save_dir),
-        epochs=int(train_section.epochs),
-        learning_rate=float(train_section.learning_rate),
-        grad_accum_steps=int(train_section.grad_accum_steps),
-        max_grad_norm=train_section.max_grad_norm,
-        amp=bool(train_section.amp),
-        amp_dtype=amp_dtype,
-        log_every=int(train_section.log_every),
-        ignore_index=int(train_section.ignore_index),
-        num_warmup_steps=int(train_section.num_warmup_steps),
-        device=device_obj,
-        batch_size=int(train_section.batch_size),
-        test_batch_size=int(train_section.test_batch_size),
-    )
-
     # ------------------------
     # Interventions config
     # ------------------------
@@ -78,6 +53,7 @@ def load_all_configs(
         act_fn=(None if inter_section.act_fn is None else str(inter_section.act_fn)),
         init_orth=bool(inter_section.init_orth),
     )
+
     # ------------------------
     # Rope parameters (optional)
     # ------------------------
@@ -147,7 +123,69 @@ def load_all_configs(
         full_parameter_finetuning=bool(model_section.get("full_parameter_finetuning", False)),
     )
 
-    return train_config, interventions_config_, olmoe_config
+    return olmoe_config
+
+
+def load_olmoe_config_from_yaml_string(
+    yaml_string: str,
+) -> configuration_olmoe.OlmoeInterventionsConfig:
+    """
+    Load OlmoeInterventionsConfig from a YAML string.
+    
+    Args:
+        yaml_string: YAML config string (same format as olmoe.yaml).
+    
+    Returns:
+        OlmoeInterventionsConfig instance.
+    """
+    cfg = cast(DictConfig, OmegaConf.create(yaml_string))
+    return build_olmoe_config(cfg)
+
+
+def load_all_configs(
+    yaml_path: str,
+) -> Tuple[TrainConfig, interventions_config.InterventionsConfig, configuration_olmoe.OlmoeInterventionsConfig]:
+    """
+    Load TrainConfig, InterventionsConfig, and OlmoeInterventionsConfig
+    from a single nested YAML file using OmegaConf.
+    """
+    cfg = cast(DictConfig, OmegaConf.load(yaml_path))
+
+    # ------------------------
+    # Train config
+    # ------------------------
+    train_section = cfg.train
+
+    amp_dtype: torch.dtype = _dtype_from_str(train_section.amp_dtype)
+
+    device_obj: Optional[torch.device]
+    if train_section.device is None:
+        device_obj = None
+    else:
+        device_obj = torch.device(str(train_section.device))
+
+    train_config = TrainConfig(
+        save_dir=str(train_section.save_dir),
+        epochs=int(train_section.epochs),
+        learning_rate=float(train_section.learning_rate),
+        grad_accum_steps=int(train_section.grad_accum_steps),
+        max_grad_norm=train_section.max_grad_norm,
+        amp=bool(train_section.amp),
+        amp_dtype=amp_dtype,
+        log_every=int(train_section.log_every),
+        ignore_index=int(train_section.ignore_index),
+        num_warmup_steps=int(train_section.num_warmup_steps),
+        device=device_obj,
+        batch_size=int(train_section.batch_size),
+        test_batch_size=int(train_section.test_batch_size),
+    )
+
+    # Build olmoe config using the shared function
+    olmoe_config = build_olmoe_config(cfg)
+
+    # intervention_config is guaranteed to exist when loading from a valid YAML
+    assert olmoe_config.intervention_config is not None, "intervention_config must be set in the YAML config"
+    return train_config, olmoe_config.intervention_config, olmoe_config
 
 
 if __name__ == "__main__":
