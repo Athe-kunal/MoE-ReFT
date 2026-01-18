@@ -14,6 +14,7 @@ train:
   test_batch_size: 8
 
 interventions:
+  enabled: true
   intervention_type: "LoreftIntervention" # or "DireftIntervention"
   intervention_layers: "all" # "all" | "odd_only" | "even_only" | "alternate"
   intervention_places: "pre_moe" # "pre_moe" | "after_moe"
@@ -50,6 +51,19 @@ model:
   router_aux_loss_coef: 0.01
   norm_topk_prob: false
   full_parameter_finetuning: false
+  lora_enabled: false
+  lora_rank: 8
+  lora_alpha: 16.0
+  lora_dropout: 0.0
+  lora_use_dora: false
+  lora_target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj
 
   # Optional RoPE parameters (can be null or omitted)
   rope_parameters:

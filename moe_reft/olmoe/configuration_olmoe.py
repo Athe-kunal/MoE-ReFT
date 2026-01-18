@@ -199,6 +199,18 @@ class OlmoeInterventionsConfig(PretrainedConfig):
             The aux loss factor for the total loss.
         norm_topk_prob (`bool`, *optional*, defaults to `False`):
             Whether to normalize the topk probabilities.
+        lora_enabled (`bool`, *optional*, defaults to `False`):
+            Whether to enable LoRA/DoRA adapters on target linear layers.
+        lora_rank (`int`, *optional*, defaults to 0):
+            Low-rank dimension for LoRA/DoRA. Set to >0 to activate adapters.
+        lora_alpha (`float`, *optional*, defaults to 1.0):
+            LoRA scaling factor (alpha).
+        lora_dropout (`float`, *optional*, defaults to 0.0):
+            Dropout probability applied to LoRA inputs.
+        lora_target_modules (`list[str]`, *optional*):
+            Names of linear submodules to wrap with LoRA/DoRA adapters.
+        lora_use_dora (`bool`, *optional*, defaults to `False`):
+            Whether to use DoRA (magnitude + direction) instead of standard LoRA.
 
     ```python
     >>> from transformers import OlmoeModel, OlmoeConfig
@@ -246,6 +258,12 @@ class OlmoeInterventionsConfig(PretrainedConfig):
         router_aux_loss_coef=0.01,
         norm_topk_prob=False,
         full_parameter_finetuning=False,
+        lora_enabled=False,
+        lora_rank=0,
+        lora_alpha=1.0,
+        lora_dropout=0.0,
+        lora_target_modules=None,
+        lora_use_dora=False,
         **kwargs,
     ):
         self.vocab_size = vocab_size
@@ -281,6 +299,12 @@ class OlmoeInterventionsConfig(PretrainedConfig):
         self.router_aux_loss_coef = router_aux_loss_coef
         self.norm_topk_prob = norm_topk_prob
         self.full_parameter_finetuning = full_parameter_finetuning
+        self.lora_enabled = lora_enabled
+        self.lora_rank = lora_rank
+        self.lora_alpha = lora_alpha
+        self.lora_dropout = lora_dropout
+        self.lora_target_modules = list(lora_target_modules or [])
+        self.lora_use_dora = lora_use_dora
         # Validate the correctness of rotary position embeddings parameters
         # BC: if there is a 'type' field, move it to 'rope_type'.
         rope_scaling = kwargs.pop("rope_scaling", None)
