@@ -36,6 +36,30 @@ def matches_any(name: str, patterns: Sequence[str]) -> bool:
     return any(fnmatch.fnmatch(name, pat) for pat in patterns)
 
 
+# Suffixes that indicate a linear layer's weight/bias (used for LoRA remapping)
+_LINEAR_SUFFIXES = (".weight", ".bias")
+
+
+def _try_lora_remap(src_name: str, dst_sd: Mapping[str, torch.Tensor]) -> str | None:
+    """
+    When LoRA wraps an nn.Linear, it stores the original layer as `base_layer`.
+    This changes parameter names from e.g. `q_proj.weight` to `q_proj.base_layer.weight`.
+
+    This function attempts to find the correct destination name by inserting `.base_layer`
+    before the final `.weight` or `.bias` suffix.
+
+    Returns the matched destination name if found, otherwise None.
+    """
+    for suffix in _LINEAR_SUFFIXES:
+        if src_name.endswith(suffix):
+            # e.g. "model.layers.0.self_attn.q_proj.weight" -> "model.layers.0.self_attn.q_proj.base_layer.weight"
+            prefix = src_name[: -len(suffix)]
+            lora_name = f"{prefix}.base_layer{suffix}"
+            if lora_name in dst_sd:
+                return lora_name
+    return None
+
+
 def build_partial_state_dict(
     src_sd: Mapping[str, torch.Tensor],
     dst_module: nn.Module,
@@ -63,8 +87,11 @@ def build_partial_state_dict(
             report.skipped_intervention.append(src_name)
             continue
 
-        # We now ignore rename_rules entirely; direct name match only
-        matched_dst: str | None = src_name if src_name in dst_sd else None
+        # Try direct name match first, then fall back to LoRA remapping
+        if src_name in dst_sd:
+            matched_dst: str | None = src_name
+        else:
+            matched_dst = _try_lora_remap(src_name, dst_sd)
 
         if matched_dst is None:
             report.skipped_missing.append(src_name)

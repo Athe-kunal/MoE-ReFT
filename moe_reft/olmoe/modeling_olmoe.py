@@ -81,7 +81,13 @@ class LoraLinear(nn.Module):
             self.lora_B = None
 
         if self.use_dora:
-            self.lora_magnitude = nn.Parameter(torch.ones(base_layer.out_features))
+            # Initialize magnitude to row norms of base_layer.weight so that
+            # at initialization (when lora_B is zero), the output is preserved:
+            # combined = base_layer.weight, dora_weight = combined * (magnitude / ||combined||)
+            # With magnitude = ||row norms||, this gives dora_weight = base_layer.weight
+            with torch.no_grad():
+                weight_norms = torch.norm(base_layer.weight, dim=1)
+            self.lora_magnitude = nn.Parameter(weight_norms.clone())
         else:
             self.lora_magnitude = None
 
@@ -98,7 +104,7 @@ class LoraLinear(nn.Module):
         weight_norm = torch.norm(combined, dim=1, keepdim=True).clamp_min(1e-6)
         magnitude = self.lora_magnitude.unsqueeze(1)
         dora_weight = combined * (magnitude / weight_norm)
-        return F.linear(x, dora_weight, self.base_layer.bias)
+        return F.linear(self.lora_dropout(x), dora_weight, self.base_layer.bias)
 
 
 def _should_apply_lora(config: configuration_olmoe.OlmoeInterventionsConfig, module_name: str) -> bool:
